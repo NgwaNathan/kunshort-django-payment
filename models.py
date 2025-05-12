@@ -5,6 +5,7 @@ import uuid
 
 from core.models import Order
 from gift.models import Coupon
+from payment.managers import PaymentManager
 from users.models import User
 
 
@@ -25,7 +26,12 @@ class PaymentType(models.Model):
         MASTER_CARD = 'master_card', _('Master Card')
         # Add more choices as needed
 
+    class PaymentProviderChoices(models.TextChoices):
+        ORANGE_CAMEROON = 'orange_cameroon', _('Orange Cameroon')
+        MTN_CAMEROON = 'mtn_cameroon', _('MTN Cameroon')
+
     payment_class = models.CharField(_('Payment Class'), max_length=20, choices=PaymentClass.choices)
+    payment_provider = models.CharField(_('Payment Provider'), max_length=20, choices=PaymentProviderChoices.choices)
 
     def __str__(self):
         return f'{self.name}'
@@ -55,17 +61,33 @@ class PaymentMethod(models.Model):
 
 
 class PaymentTransaction(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE)  # Link to the user making the transaction
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="transactions")  # Link to the user making the transaction
     amount = models.DecimalField(max_digits=10, decimal_places=2)  # Amount of the transaction
     amount_refundable = models.DecimalField(max_digits=10, decimal_places=2, default=0)  # Amount that can be refunded
     currency = models.CharField(max_length=10, default="XAF")  # Currency code (e.g., 'USD', 'EUR')
     created_at = models.DateTimeField(auto_now_add=True)  # Timestamp when the transaction was created
     updated_at = models.DateTimeField(auto_now=True)  # Timestamp when the transaction was last updated
-    payment_method = models.ForeignKey(PaymentMethod, on_delete=models.SET_NULL, max_length=50, blank=True, null=True)  # Optional field for payment method details
+    payment_type = models.ForeignKey(PaymentType, on_delete=models.PROTECT, max_length=50, blank=True, null=True)  # Optional field for payment method details
     payment_detail = models.JSONField(_('Detail'))
     transaction_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)  # Unique identifier for the transaction
     coupon = models.ForeignKey(Coupon, on_delete=models.PROTECT, null=True, blank=True)  # Link to the applied coupon
     order = models.ForeignKey(Order, on_delete=models.PROTECT)  # Link to the associated order
+    external_reference = models.CharField(max_length=255, blank=True, null=True)  # External reference for the transaction
+
+    def paid(self):
+        self.save()
+        PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.COMPLETED.value)
+
+    def failed(self):
+        self.save()
+        PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.FAILED.value)
+    
+    def refunded(self):
+        self.save()
+        PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.REFUNDED.value)
+
+
+    objects = PaymentManager
 
     def __str__(self):
         return f"Transaction {self.transaction_id} - {self.amount} {self.currency}"
@@ -79,9 +101,12 @@ class PaymentStatus(models.Model):
         REFUNDED = 'refunded', 'Refunded'
 
     transaction = models.ForeignKey(PaymentTransaction, on_delete=models.CASCADE, related_name='statuses')  # Link to the payment transaction
-    status = models.CharField(max_length=10, choices=StatusChoices.choices)  # Status of the payment
+    status = models.CharField(max_length=10, choices=StatusChoices.choices, default=StatusChoices.PENDING.value)  # Status of the payment
     updated_at = models.DateTimeField(auto_now=True)  # Timestamp when the status was last updated
     created_at = models.DateTimeField(auto_now_add=True)  # Timestamp when the status was created
+
+    class Meta:
+        unique_together = ("transaction", "status")
 
     def __str__(self):
         return f"PaymentStatus {self.status} for Transaction {self.transaction.transaction_id}"

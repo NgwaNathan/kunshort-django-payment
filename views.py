@@ -1,26 +1,25 @@
+import json
 from drf_spectacular.utils import extend_schema
 from rest_framework import viewsets, mixins
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
+from django.conf import settings
 
-from payment.models import PaymentType, PaymentMethod
+from notification.service import NotificationMessage
+from notification.utils.common import send_push_notification
+from payment.models import PaymentTransaction, PaymentType, PaymentMethod
 from payment.serializers import PaymentMethodSerializer, UserPaymentTypeSerializer
 
 from django.db.models import Prefetch
 from django.db import transaction
 
+# Importing the required decorators
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 
-# Create your views here.
-
-
-# class PaymentTypesViewSet(viewsets.ReadOnlyModelViewSet):
-#     queryset = PaymentType.objects.filter(is_active=True)
-#     serializer_class = PaymentTypeSerializer
-
-#     @extend_schema(description='Get list of supported payment types in the platform')
-#     def list(self, request, *args, **kwargs):
-#         return super().list(request, *args, **kwargs)
+from payment.service import PaymentService
 
 
 class UserPaymentTypes(viewsets.ReadOnlyModelViewSet):
@@ -67,6 +66,35 @@ class UserPaymentMethods(viewsets.GenericViewSet, mixins.CreateModelMixin, mixin
         return super().partial_update(request, *args, **kwargs)
 
 
-# class CreateUserPaymentType(viewsets.GenericViewSet, mixins.CreateModelMixin):
-#     def create(self, request, *args, **kwargs):
-#         serializer_clas
+
+@csrf_exempt
+@api_view(['POST'])
+def update_flutterwave_transaction(request):
+    secret_hash = settings.FLUTTERWAVE_PAYMENT["FLW_SECRET_HASH"]
+    signature = request.headers.get("Verif-Hash")
+    if signature == None or (signature != secret_hash):
+        return Response(status=status.HTTP_401_UNAUTHORIZED)
+    payload = json.loads(request.body)
+    print(payload)
+    payment_service = PaymentService()
+    try:
+        transaction = PaymentTransaction.objects.select_related("user").get(external_reference=payload["id"])
+        user = transaction.user
+        success, _ = payment_service.verify_flutterwave_transaction(str(transaction.transaction_id))
+        print(success, _)
+        if success and _["status"] == "success":
+            transaction.success()
+            # send payment success notification to the user
+            for device in user.devices:
+                send_push_notification(device.device_token, 
+                                        NotificationMessage.PAYMENT_SUCCESS.title, 
+                                        NotificationMessage.PAYMENT_SUCCESS.body(_["data"]["amount"], _["data"]["currency"]))
+            return Response(status=status.HTTP_200_OK)
+        else:
+            transaction.failed()
+        return Response(status=status.HTTP_401_UNAUTHORIZED)
+    except PaymentTransaction.DoesNotExist as ex:
+
+        return Response(status=status.HTTP_404_NOT_FOUND)
+        
+

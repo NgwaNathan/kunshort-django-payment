@@ -1,12 +1,13 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
-from payment.views import UserPaymentMethods, UserPaymentTypes
+from payment.views import UserPaymentMethods, UserPaymentTypes, update_flutterwave_transaction
 
 router = DefaultRouter()
 router.register(r'user-payment-types', UserPaymentTypes, basename='user_payment_types')
 router.register(r'user-payment-method', UserPaymentMethods, basename='user_payment_methods')
 
 urlpatterns = [
-    path('', include((router.urls, 'payment'), namespace='payment'))
+    path('', include((router.urls, 'payment'), namespace='payment')),
+    path('flutterwave/transaction-update/', update_flutterwave_transaction, name='flutterwave-transaction-update')
 ]
