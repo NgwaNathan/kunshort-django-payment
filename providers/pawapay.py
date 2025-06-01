@@ -8,37 +8,58 @@ import requests
 
 from payment.utils import clean_phone_number
 
+from enum import Enum
+
 
 
 urls = {
-    "momo_pay": "https://api.flutterwave.com/v3/charges?type=mobile_money_franco",
-    "verify_transaction": lambda ref: f"https://api.flutterwave.com/v3/transactions/{ref}/verify",
+    "momo_pay": f"{settings.PAWAPAY["BASE_URL"]}/deposits",
+    "verify_transaction": lambda ref: f"{settings.PAWAPAY["BASE_URL"]}/deposits/{ref}",
     "refund_transaction": lambda ref: f"https://api.flutterwave.com/v3/transactions/{ref}/refund"
 }
 
 def get_headers():
     return {
-        'Authorization': settings.FLUTTERWAVE_PAYMENT["SECRET_KEY"],  # Replace with your actual API key
+        'Authorization': f'Bearer {settings.PAWAPAY["BEARER TOKEN"]}',
         'content-type': 'application/json'
     }
+    
+class PawapayDepositStatus(Enum):
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    DUPLICATE_IGNORED = "DUPLICATE_IGNORED"
+    COMPLETED = "COMPLETED"
 
-class FlutterWaveProvider(Provider):
-    def mobile_money(self, number, amount, tx_ref, country):
+class PawapayProvider(Provider):
+    def mobile_money(self, number, amount, tx_ref, country, correspondent):
         try:
+            from datetime import datetime
+            import pytz
             data = {
-                "phone_number": f"237{clean_phone_number(number)}",
+                "deposit": tx_ref,
                 "amount": float(amount),
                 "currency": "XAF",
+                "correspondent": correspondent,
+                "payer": {
+                    "address": {
+                        "value": f"237{clean_phone_number(number)}"
+                    },
+                    "type": "MSISDN"
+                },
+                "customerTimestamp": datetime.now(pytz.utc).isoformat(),
+                "statementDescription": "For your eMaketa list",
                 "country": country,
-                "email": "customer@kunshort.com",
-                "tx_ref": tx_ref
+                "metadata": []
+                
             }
 
             response = requests.post(urls["momo_pay"], headers=get_headers(), json=data)
 
             if response.status_code == 200:
                 payload = json.loads(response.content.decode('utf-8'))
-                return True, payload["data"]["id"]
+                if payload["status"] == PawapayDepositStatus.ACCEPTED.value:
+                    return True, payload["depositId"]
+                return False, PaymentErrorCode.PAYMENT_INITIATION_FAILURE.message
             else:
                 print(response.content)
                 return False, PaymentErrorCode.PAYMENT_INITIATION_FAILURE.message
@@ -47,17 +68,17 @@ class FlutterWaveProvider(Provider):
             return False, PaymentErrorCode.PAYMENT_INITIATION_FAILURE.message
     
     def momo_pay_cameroon(self, number, amount, tx_ref):
-        return self.mobile_money(number, amount, tx_ref, "CM")
+        return self.mobile_money(number, amount, tx_ref, "CMR", "MTN_MOMO_CMR")
 
     def orange_money_pay_cameroon(self, number, amount, tx_ref):
-        return self.mobile_money(number, amount, tx_ref, "CM")
+        return self.mobile_money(number, amount, tx_ref, "CMR", "ORANGE_CMR")
     
     def verify_transaction(self, ref):
         try:
             response = requests.get(urls["verify_transaction"](ref), headers=get_headers())
-
+            payload = response.json()
             if response.status_code == 200:
-                return True, response.json()
+                return True, payload
             else:
                 return False, PaymentErrorCode.VERIFY_TRANSACTION_FAILURE.message
         except Exception as ex:

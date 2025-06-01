@@ -9,5 +9,4 @@ class Provider(ABC):
     @abstractmethod
     def orange_money_pay_cameroon(self, number):
         pass
-
-
+    

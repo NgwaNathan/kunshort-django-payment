@@ -1,6 +1,11 @@
 from django.contrib import admin
+from django.contrib import messages
+from django.http import HttpResponseRedirect
+from django.urls import reverse
+from django.utils.html import format_html
 
 from payment.models import PaymentType
+from payment.service import PaymentService
 
 
 # Register your models here.
@@ -11,25 +16,127 @@ class PaymentTypeAdmin(admin.ModelAdmin):
     list_display = ('short_name', 'name', 'logo')
 
 from django.contrib import admin
-from .models import PaymentTransaction, PaymentStatus
+from .models import PaymentRefund, PaymentTransaction, PaymentStatus
 
 class PaymentTransactionAdmin(admin.ModelAdmin):
-    list_display = ('transaction_id', 'user', 'amount', 'currency', 'created_at', 'updated_at')
+    list_display = ('transaction_id', 'external_reference', 'user', 'amount', 'currency', 'created_at', 'updated_at', 'status', 'check_status_button')
     list_filter = ('currency', 'created_at')
-    search_fields = ('transaction_id', 'user__username', 'amount')
+    search_fields = ('transaction_id', 'external_reference', 'user__username', 'amount')
     ordering = ('-created_at',)
     readonly_fields = ('transaction_id', 'created_at', 'updated_at')
 
+    def get_status_action_text(self, obj):
+        last_status = obj.statuses.last()
+        if not obj.statuses.exists():
+            return "Initiate", True, "payment:retry_failed_transaction"
+        elif last_status.status == PaymentStatus.StatusChoices.PENDING.value:
+            return "Check", True, "payment:check_transaction_status"
+        elif last_status.status == PaymentStatus.StatusChoices.FAILED.value:
+            return "Retry", True, "payment:retry_failed_transaction"
+        elif last_status.status == PaymentStatus.StatusChoices.COMPLETED.value or last_status.status == PaymentStatus.StatusChoices.REFUND_FAILED:
+            return "Refund", True, "payment:initiate_refund"
+        elif last_status.status == PaymentStatus.StatusChoices.REFUNDED.value:
+            refund = PaymentRefund.objects.get(transaction=obj)
+            if refund.succeeded:
+                return "✅ Refunded", False, ""
+            else:
+                return "Verify", True, "payment:verify_refund_status"
+
     def status(self, obj):
-        return obj.status.status if obj.status else 'No Status'
+        if not obj.statuses.exists():
+            return "No Status"
+        return obj.statuses.last().status
     status.short_description = 'Payment Status'
 
+    def check_status_button(self, obj):
+        text, is_action, view = self.get_status_action_text(obj)
+        if is_action:
+            return format_html('<a class="button" href="{}">{}</a>', reverse(view, args=[str(obj.transaction_id), obj.external_reference]), text)
+        else:
+            return format_html('<h4>{}</h4>', text)
+    check_status_button.short_description = 'Action'
+
+    def check_transaction_status(request, transaction_id, external_reference):
+        print(transaction_id, external_reference);
+        
+        payment_service = PaymentService()
+        success, _ = payment_service.verify_transaction(external_reference)
+        transaction = PaymentTransaction.objects.get(transaction_id=transaction_id)
+        if success and _["status"] == "success":
+            transaction.success()
+            messages.success(request, f'Transaction {transaction_id} was successful.')
+        else:
+            transaction.failed()
+            messages.error(request, f'Transaction {transaction_id} failed.')
+
+        return HttpResponseRedirect(request.META.get('HTTP_REFERER'))
+    
+    def retry_failed_transaction(request, transaction_id, external_reference):
+        payment_service = PaymentService()
+        transaction = PaymentTransaction.objects.get(transaction_id=transaction_id)
+        try:
+            success, _ = payment_service.initiate_payment_retry(transaction)
+            if success:
+                transaction.pending()
+                messages.success(request, f'Transaction {transaction_id} retry was successful.')
+            else:
+                print(_)
+                transaction.failed()
+                messages.error(request, f'Transaction {transaction_id} retry failed')
+                
+        except Exception as ex:
+            print(ex)
+            transaction.failed()
+            messages.error(request, f'Transaction {transaction_id} retry failed')
+            
+        return HttpResponseRedirect(request.META.get('HTTP_REFERER'))
+    
+    def initiate_refund(request, transaction_id, external_reference):
+        payment_service = PaymentService()
+        transaction = PaymentTransaction.objects.get(transaction_id=transaction_id)
+        try:
+            print(transaction.amount_refundable)
+            success, _ = payment_service.initiate_refund(external_reference, {"amount": transaction.amount_refundable, "comments": "Cancelled"})
+            if success:
+                transaction.refund_initiated(_["data"]["tx_id"])
+                messages.success(request, f'Refund for transaction {transaction_id} was initiated successfully.')
+            else:
+                print(_)
+                transaction.refund_failed()
+                messages.error(request, f'Refund for transaction {transaction_id} failed')
+                
+        except Exception as ex:
+            print(ex)
+            transaction.refund_failed()
+            messages.error(request, f'Refund for transaction {transaction_id} failed')
+            
+        return HttpResponseRedirect(request.META.get('HTTP_REFERER'))
+    
+    def verify_refund_status(request, transaction_id, external_reference):
+        payment_service = PaymentService()
+        transaction = PaymentTransaction.objects.select_related('refund').get(transaction_id=transaction_id)
+        try:
+            pass
+        except Exception as ex:
+            print(ex)
+            
 class PaymentStatusAdmin(admin.ModelAdmin):
     list_display = ('transaction', 'status', 'created_at', 'updated_at')
     list_filter = ('status', 'created_at')
     search_fields = ('transaction__transaction_id', 'status')
     ordering = ('-created_at',)
     readonly_fields = ('created_at', 'updated_at')
+    
+    
+@admin.register(PaymentRefund)
+class PaymentRefundAdmin(admin.ModelAdmin):
+    list_display = ('transaction', 'provider_refund_id', 'manual_refund_id', 'succeeded', 'created_at')
+    search_fields = ('transaction__transaction_id', 'provider_refund_id', 'manual_refund_id')
+    list_filter = ('succeeded', 'created_at')
+    ordering = ('-created_at',)
+
+    def __str__(self):
+        return f"Refund for Transaction {self.transaction.transaction_id}"
 
 # Register the models with the admin site
 admin.site.register(PaymentTransaction, PaymentTransactionAdmin)

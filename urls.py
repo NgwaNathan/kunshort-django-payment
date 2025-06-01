@@ -1,7 +1,8 @@
-from django.urls import path, include
+from django.urls import path, include, re_path
 from rest_framework.routers import DefaultRouter
+from payment.admin import PaymentTransactionAdmin
 
-from payment.views import UserPaymentMethods, UserPaymentTypes, update_flutterwave_transaction
+from payment.views import UserPaymentMethods, UserPaymentTypes, update_flutterwave_transaction, update_pawapay_transaction
 
 router = DefaultRouter()
 router.register(r'user-payment-types', UserPaymentTypes, basename='user_payment_types')
@@ -9,5 +10,9 @@ router.register(r'user-payment-method', UserPaymentMethods, basename='user_payme
 
 urlpatterns = [
     path('', include((router.urls, 'payment'), namespace='payment')),
-    path('flutterwave/transaction-update/', update_flutterwave_transaction, name='flutterwave-transaction-update')
+    path("flutterwave/transaction-update/", update_flutterwave_transaction, name='flutterwave-transaction-update'),
+    path("pawapay/transaction-update/", update_pawapay_transaction, name="paway-transaction-update"),
+    path('check_transaction_status/<str:transaction_id>/<str:external_reference>/', PaymentTransactionAdmin.check_transaction_status, name='check_transaction_status'),
+    path('retry-failed-transaction/<str:transaction_id>/<str:external_reference>/', PaymentTransactionAdmin.retry_failed_transaction, name="retry_failed_transaction"),
+    path('initiate_refund/<str:transaction_id>/<str:external_reference>/', PaymentTransactionAdmin.initiate_refund, name="initiate_refund"),
 ]

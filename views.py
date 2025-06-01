@@ -10,6 +10,7 @@ from django.conf import settings
 from notification.service import NotificationMessage
 from notification.utils.common import send_push_notification
 from payment.models import PaymentTransaction, PaymentType, PaymentMethod
+from payment.providers.pawapay import PawapayDepositStatus
 from payment.serializers import PaymentMethodSerializer, UserPaymentTypeSerializer
 
 from django.db.models import Prefetch
@@ -75,20 +76,13 @@ def update_flutterwave_transaction(request):
     if signature == None or (signature != secret_hash):
         return Response(status=status.HTTP_401_UNAUTHORIZED)
     payload = json.loads(request.body)
-    print(payload)
     payment_service = PaymentService()
     try:
         transaction = PaymentTransaction.objects.select_related("user").get(external_reference=payload["id"])
-        user = transaction.user
-        success, _ = payment_service.verify_flutterwave_transaction(str(transaction.transaction_id))
+        success, _ = payment_service.verify_transaction(transaction.external_reference)
         print(success, _)
         if success and _["status"] == "success":
             transaction.success()
-            # send payment success notification to the user
-            for device in user.devices:
-                send_push_notification(device.device_token, 
-                                        NotificationMessage.PAYMENT_SUCCESS.title, 
-                                        NotificationMessage.PAYMENT_SUCCESS.body(_["data"]["amount"], _["data"]["currency"]))
             return Response(status=status.HTTP_200_OK)
         else:
             transaction.failed()
@@ -96,5 +90,25 @@ def update_flutterwave_transaction(request):
     except PaymentTransaction.DoesNotExist as ex:
 
         return Response(status=status.HTTP_404_NOT_FOUND)
+    
+@csrf_exempt
+@api_view(['POST'])
+def update_pawapay_transaction(request):
+    payload = json.loads(request.body)
+    payment_service = PaymentService()
+    try:
+        transaction = PaymentTransaction.objects.select_related("user").get(external_reference=payload["depositId"])
+        success, _ = payment_service.verify_transaction(transaction.external_reference)
+        print(success, _)
+        if success and _["status"] == PawapayDepositStatus.COMPLETED.value:
+            transaction.success()
+            return Response(status=status.HTTP_200_OK)
+        else:
+            transaction.failed()
+        return Response(status=status.HTTP_401_UNAUTHORIZED)
+    except PaymentTransaction.DoesNotExist as ex:
+
+        return Response(status=status.HTTP_404_NOT_FOUND)
+    
         
 
