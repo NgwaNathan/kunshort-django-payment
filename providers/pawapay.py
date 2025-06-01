@@ -13,8 +13,8 @@ from enum import Enum
 
 
 urls = {
-    "momo_pay": f"{settings.PAWAPAY["BASE_URL"]}/deposits",
-    "verify_transaction": lambda ref: f"{settings.PAWAPAY["BASE_URL"]}/deposits/{ref}",
+    "momo_pay": f"{settings.PAWAPAY['BASE_URL']}/deposits",
+    "verify_transaction": lambda ref: f"{settings.PAWAPAY['BASE_URL']}/deposits/{ref}",
     "refund_transaction": lambda ref: f"https://api.flutterwave.com/v3/transactions/{ref}/refund"
 }
 
