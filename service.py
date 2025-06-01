@@ -74,7 +74,7 @@ class PaymentService:
         
         if payment_type.payment_class == PaymentType.PaymentClass.PHONE_NUMBER.value:
             if payment_type.payment_provider == PaymentType.PaymentProviderChoices.MTN_CAMEROON:
-                success, _ = self.provider.momo_pay_cameroon(f"237{payment_detail["phone_number"]}", amount, str(transaction.transaction_id))
+                success, _ = self.provider.momo_pay_cameroon(f"237{payment_detail['phone_number']}", amount, str(transaction.transaction_id))
                 if success:
                     transaction.external_reference = _
                     transaction.save()
@@ -83,7 +83,7 @@ class PaymentService:
                 else:
                     raise Exception(_)
             elif payment_type.payment_provider == PaymentType.PaymentProviderChoices.ORANGE_CAMEROON:
-                success, _ = self.provider.orange_money_pay_cameroon(f"237{payment_detail["phone_number"]}", amount, str(transaction.transaction_id))
+                success, _ = self.provider.orange_money_pay_cameroon(f"237{payment_detail['phone_number']}", amount, str(transaction.transaction_id))
                 if success:
                     transaction.external_reference = _
                     transaction.save()
