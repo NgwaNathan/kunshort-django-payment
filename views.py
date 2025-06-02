@@ -7,8 +7,6 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.conf import settings
 
-from notification.service import NotificationMessage
-from notification.utils.common import send_push_notification
 from payment.models import PaymentTransaction, PaymentType, PaymentMethod
 from payment.providers.pawapay import PawapayDepositStatus
 from payment.serializers import PaymentMethodSerializer, UserPaymentTypeSerializer
@@ -57,7 +55,6 @@ class UserPaymentMethods(viewsets.GenericViewSet, mixins.CreateModelMixin, mixin
 
                 # Set this one as default
                 instance.is_default = True
-                print(instance.user.username)
                 instance.save(update_fields=["is_default"])
 
                 serializer = self.get_serializer(instance)
@@ -80,7 +77,6 @@ def update_flutterwave_transaction(request):
     try:
         transaction = PaymentTransaction.objects.select_related("user").get(external_reference=payload["id"])
         success, _ = payment_service.verify_transaction(transaction.external_reference)
-        print(success, _)
         if success and _["status"] == "success":
             transaction.success()
             return Response(status=status.HTTP_200_OK)
@@ -99,7 +95,6 @@ def update_pawapay_transaction(request):
     try:
         transaction = PaymentTransaction.objects.select_related("user").get(external_reference=payload["depositId"])
         success, _ = payment_service.verify_transaction(transaction.external_reference)
-        print(success, _)
         if success and _["status"] == PawapayDepositStatus.COMPLETED.value:
             transaction.success()
             return Response(status=status.HTTP_200_OK)

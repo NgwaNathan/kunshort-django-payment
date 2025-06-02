@@ -10,7 +10,9 @@ from payment.utils import clean_phone_number
 
 from enum import Enum
 
+import logging
 
+logger = logging.getLogger(__name__)
 
 urls = {
     "momo_pay": f"{settings.PAWAPAY['BASE_URL']}/deposits",
@@ -61,10 +63,10 @@ class PawapayProvider(Provider):
                     return True, payload["depositId"]
                 return False, PaymentErrorCode.PAYMENT_INITIATION_FAILURE.message
             else:
-                print(response.content)
+                logger.exception(response.content)
                 return False, PaymentErrorCode.PAYMENT_INITIATION_FAILURE.message
         except Exception as ex:
-            print(ex)
+            logger.exception(ex)
             return False, PaymentErrorCode.PAYMENT_INITIATION_FAILURE.message
     
     def momo_pay_cameroon(self, number, amount, tx_ref):
@@ -82,7 +84,7 @@ class PawapayProvider(Provider):
             else:
                 return False, PaymentErrorCode.VERIFY_TRANSACTION_FAILURE.message
         except Exception as ex:
-            print(ex)
+            logger.exception(ex)
             return False, PaymentErrorCode.VERIFY_TRANSACTION_FAILURE.message
         
     def initiate_refund(self, ref, payload):
@@ -94,11 +96,11 @@ class PawapayProvider(Provider):
                 if response_body['status'] == 'success':
                     return True, response.json()
                 else:
-                    print(response_body, response.content)
+                    logger.exception(response_body, response.content)
                     return False, PaymentErrorCode.REFUND_TRANSACTION_FAILURE.message
             else:
-                print(response.content)
+                logger.exception(response.content)
                 return False, PaymentErrorCode.REFUND_TRANSACTION_FAILURE.message
         except Exception as ex:
-            print(ex)
+            logger.exception(ex)
             return False, PaymentErrorCode.REFUND_TRANSACTION_FAILURE.message

@@ -1,3 +1,4 @@
+import logging
 from django.contrib import admin
 from django.contrib import messages
 from django.http import HttpResponseRedirect
@@ -10,7 +11,7 @@ from payment.service import PaymentService
 
 # Register your models here.
 
-
+logger = logging.getLogger(__name__)
 @admin.register(PaymentType)
 class PaymentTypeAdmin(admin.ModelAdmin):
     list_display = ('short_name', 'name', 'logo')
@@ -57,7 +58,6 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
     check_status_button.short_description = 'Action'
 
     def check_transaction_status(request, transaction_id, external_reference):
-        print(transaction_id, external_reference);
         
         payment_service = PaymentService()
         success, _ = payment_service.verify_transaction(external_reference)
@@ -80,12 +80,11 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
                 transaction.pending()
                 messages.success(request, f'Transaction {transaction_id} retry was successful.')
             else:
-                print(_)
                 transaction.failed()
                 messages.error(request, f'Transaction {transaction_id} retry failed')
                 
         except Exception as ex:
-            print(ex)
+            logger.exception(ex)
             transaction.failed()
             messages.error(request, f'Transaction {transaction_id} retry failed')
             
@@ -95,18 +94,16 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
         payment_service = PaymentService()
         transaction = PaymentTransaction.objects.get(transaction_id=transaction_id)
         try:
-            print(transaction.amount_refundable)
             success, _ = payment_service.initiate_refund(external_reference, {"amount": transaction.amount_refundable, "comments": "Cancelled"})
             if success:
                 transaction.refund_initiated(_["data"]["tx_id"])
                 messages.success(request, f'Refund for transaction {transaction_id} was initiated successfully.')
             else:
-                print(_)
                 transaction.refund_failed()
                 messages.error(request, f'Refund for transaction {transaction_id} failed')
                 
         except Exception as ex:
-            print(ex)
+            logger.exception(ex)
             transaction.refund_failed()
             messages.error(request, f'Refund for transaction {transaction_id} failed')
             
@@ -118,7 +115,7 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
         try:
             pass
         except Exception as ex:
-            print(ex)
+            logger.exception(ex)
             
 class PaymentStatusAdmin(admin.ModelAdmin):
     list_display = ('transaction', 'status', 'created_at', 'updated_at')
