@@ -7,6 +7,9 @@ from users.models import User
 
 from django.conf import settings
 
+import logging
+
+logger = logging.getLogger(__name__)
 
 class PaymentService:
     _instance = None
@@ -75,6 +78,7 @@ class PaymentService:
         if payment_type.payment_class == PaymentType.PaymentClass.PHONE_NUMBER.value:
             if payment_type.payment_provider == PaymentType.PaymentProviderChoices.MTN_CAMEROON:
                 success, _ = self.provider.momo_pay_cameroon(f"237{payment_detail['phone_number']}", amount, str(transaction.transaction_id))
+                logger.info(f"Momo Pay Cameroon: {success}, {_}")
                 if success:
                     transaction.external_reference = _
                     transaction.save()

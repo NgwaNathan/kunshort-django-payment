@@ -17,12 +17,12 @@ logger = logging.getLogger(__name__)
 urls = {
     "momo_pay": f"{settings.PAWAPAY['BASE_URL']}/deposits",
     "verify_transaction": lambda ref: f"{settings.PAWAPAY['BASE_URL']}/deposits/{ref}",
-    "refund_transaction": lambda ref: f"https://api.flutterwave.com/v3/transactions/{ref}/refund"
+    "refund_transaction": lambda ref: f"{settings.PAWAPAY['BASE_URL']}/{ref}/refund"
 }
 
 def get_headers():
     return {
-        'Authorization': f'Bearer {settings.PAWAPAY["BEARER TOKEN"]}',
+        'Authorization': f'Bearer {settings.PAWAPAY["BEARER_TOKEN"]}',
         'content-type': 'application/json'
     }
     
@@ -33,13 +33,16 @@ class PawapayDepositStatus(Enum):
     COMPLETED = "COMPLETED"
 
 class PawapayProvider(Provider):
+    def __init__(self):
+        self.status = PawapayDepositStatus
+
     def mobile_money(self, number, amount, tx_ref, country, correspondent):
         try:
             from datetime import datetime
             import pytz
             data = {
-                "deposit": tx_ref,
-                "amount": float(amount),
+                "depositId": tx_ref,
+                "amount": int(round(float(amount), 0)),
                 "currency": "XAF",
                 "correspondent": correspondent,
                 "payer": {
@@ -54,9 +57,8 @@ class PawapayProvider(Provider):
                 "metadata": []
                 
             }
-
             response = requests.post(urls["momo_pay"], headers=get_headers(), json=data)
-
+            logger.info(f"Momo Pay Cameroon: {response.status_code}, {response.content}")
             if response.status_code == 200:
                 payload = json.loads(response.content.decode('utf-8'))
                 if payload["status"] == PawapayDepositStatus.ACCEPTED.value:
@@ -80,7 +82,7 @@ class PawapayProvider(Provider):
             response = requests.get(urls["verify_transaction"](ref), headers=get_headers())
             payload = response.json()
             if response.status_code == 200:
-                return True, payload
+                return True, payload[0]
             else:
                 return False, PaymentErrorCode.VERIFY_TRANSACTION_FAILURE.message
         except Exception as ex:

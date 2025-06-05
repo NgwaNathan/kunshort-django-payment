@@ -151,9 +151,17 @@ class PaymentStatus(models.Model):
             StatusChoices.REFUNDED.value,
             StatusChoices.REFUND_FAILED.value
         ],
-        StatusChoices.FAILED.value: [],  # No further statuses allowed
-        StatusChoices.REFUNDED.value: [],  # No further statuses allowed
-        StatusChoices.REFUND_FAILED.value: []  # No further statuses allowed
+        StatusChoices.FAILED.value: [
+            StatusChoices.FAILED.value,
+            StatusChoices.COMPLETED.value
+        ],
+        StatusChoices.REFUNDED.value: [
+            
+        ],  # No further statuses allowed
+        StatusChoices.REFUND_FAILED.value: [
+            StatusChoices.REFUND_FAILED.value,
+            StatusChoices.REFUNDED.value
+        ]  # No further statuses allowed
     }
 
     transaction = models.ForeignKey(PaymentTransaction, on_delete=models.PROTECT, related_name='statuses')

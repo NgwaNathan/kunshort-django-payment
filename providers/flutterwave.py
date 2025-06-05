@@ -1,3 +1,4 @@
+from enum import Enum
 import json
 from payment.errors import PaymentErrorCode
 from payment.providers.provider import Provider
@@ -16,6 +17,12 @@ urls = {
     "refund_transaction": lambda ref: f"https://api.flutterwave.com/v3/transactions/{ref}/refund"
 }
 
+class FlutterWaveDepositStatus(Enum):
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    DUPLICATE_IGNORED = "DUPLICATE_IGNORED"
+    COMPLETED = "COMPLETED"
+
 def get_headers():
     return {
         'Authorization': settings.FLUTTERWAVE_PAYMENT["SECRET_KEY"],  # Replace with your actual API key
@@ -23,6 +30,9 @@ def get_headers():
     }
 
 class FlutterWaveProvider(Provider):
+    def __init__(self):
+        self.status = FlutterWaveDepositStatus
+
     def mobile_money(self, number, amount, tx_ref, country):
         try:
             data = {
