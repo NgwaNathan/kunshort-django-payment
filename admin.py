@@ -77,21 +77,23 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
         logger.info(f"Retrying transaction for {transaction_id}")
         try:
             success, _ = payment_service.verify_transaction(transaction_id)
-            logger.info(f"Response for retry transaction {_}")
-            if success and _["status"] == payment_service.provider.status.COMPLETED.value:
-                transaction.success()
-                messages.success(request, f'Transaction {transaction_id} was successful.')
-            elif success and _["status"] == payment_service.provider.status.ACCEPTED.value:
-                transaction.pending()
-                messages.success(request, f'Transaction {transaction_id} was successful.')
-            elif success and _["status"] == payment_service.provider.status.REJECTED.value:
+            if success and _["status"] == payment_service.provider.status.FAILED.value:
                 success, _ = payment_service.initiate_payment_retry(transaction)
-                if success:
+                logger.info(f"Response for retry transaction {_}")
+                if success and _["status"] == payment_service.provider.status.COMPLETED.value:
+                    transaction.success()
+                    messages.success(request, f'Transaction {transaction_id} was successful.')
+                elif success and _["status"] == payment_service.provider.status.ACCEPTED.value:
                     transaction.pending()
-                    messages.success(request, f'Transaction {transaction_id} retry was successful.')
-                else:
-                    transaction.failed()
-                    messages.error(request, f'Transaction {transaction_id} retry failed')
+                    messages.success(request, f'Transaction {transaction_id} was successful.')
+                elif success and _["status"] == payment_service.provider.status.REJECTED.value:
+                    success, _ = payment_service.initiate_payment_retry(transaction)
+                    if success:
+                        transaction.pending()
+                        messages.success(request, f'Transaction {transaction_id} retry was successful.')
+                    else:
+                        transaction.failed()
+                        messages.error(request, f'Transaction {transaction_id} retry failed')
             
                 
         except Exception as ex:

@@ -31,6 +31,7 @@ class PawapayDepositStatus(Enum):
     REJECTED = "REJECTED"
     DUPLICATE_IGNORED = "DUPLICATE_IGNORED"
     COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 class PawapayProvider(Provider):
     def __init__(self):
