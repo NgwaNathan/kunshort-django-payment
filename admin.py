@@ -74,8 +74,10 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
     def retry_failed_transaction(request, transaction_id, external_reference):
         payment_service = PaymentService()
         transaction = PaymentTransaction.objects.get(transaction_id=transaction_id)
+        logger.info(f"Retrying transaction for {transaction_id}")
         try:
             success, _ = payment_service.verify_transaction(transaction_id)
+            logger.info(f"Response for retry transaction {_}")
             if success and _["status"] == payment_service.provider.status.COMPLETED.value:
                 transaction.success()
                 messages.success(request, f'Transaction {transaction_id} was successful.')
