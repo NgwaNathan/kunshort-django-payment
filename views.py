@@ -67,6 +67,7 @@ class UserPaymentMethods(viewsets.GenericViewSet, mixins.CreateModelMixin, mixin
 
 @csrf_exempt
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def update_flutterwave_transaction(request):
     secret_hash = settings.FLUTTERWAVE_PAYMENT["FLW_SECRET_HASH"]
     signature = request.headers.get("Verif-Hash")
