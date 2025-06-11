@@ -102,7 +102,7 @@ def update_pawapay_transaction(request):
             return Response(status=status.HTTP_200_OK)
         else:
             transaction.failed()
-        return Response(status=status.HTTP_401_UNAUTHORIZED)
+        return Response(status=status.HTTP_200_OK)
     except PaymentTransaction.DoesNotExist as ex:
 
         return Response(status=status.HTTP_404_NOT_FOUND)
