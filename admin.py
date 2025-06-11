@@ -82,9 +82,7 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
             success, _ = payment_service.verify_transaction(transaction_id)
             if success and _["status"] == payment_service.provider.status.FAILED.value:
                 success, _ = payment_service.initiate_payment_retry(transaction)
-                logger.info(f"Response for retry transaction {_}")
                 if success:
-                    transaction.pending()
                     messages.success(request, f'Re initiated payment for order {transaction.order.order_id}.')
             
                 

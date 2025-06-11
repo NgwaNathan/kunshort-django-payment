@@ -11,7 +11,7 @@ def clean_phone_number(phone_number: str, prefx = "237") -> str:
 
 def get_customer_message_from_payment_status(payment_status: PaymentStatus):
     if payment_status.status == PaymentStatus.StatusChoices.FAILED:
-        return "We experienced a failure processing your payment. Visit your eMaketa List and retry the payment."
+        return "We experienced a failure processing your payment. Visit your eMaketa List, copy your order ID and contact us with your order ID."
     elif payment_status.status == PaymentStatus.StatusChoices.COMPLETED:
         transaction = payment_status.transaction
         return f"Thank you. We have received your payment of {transaction.currency} {transaction.amount}. Thanks for trusting eMaketa."
