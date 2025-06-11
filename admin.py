@@ -43,6 +43,8 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
                 return "✅ Refunded", False, ""
             else:
                 return "Verify", True, "payment:verify_refund_status"
+        else:
+            return "", False, ""
 
     def status(self, obj):
         if not obj.statuses.exists():
@@ -81,20 +83,9 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
             if success and _["status"] == payment_service.provider.status.FAILED.value:
                 success, _ = payment_service.initiate_payment_retry(transaction)
                 logger.info(f"Response for retry transaction {_}")
-                if success and _["status"] == payment_service.provider.status.COMPLETED.value:
-                    transaction.success()
-                    messages.success(request, f'Transaction {transaction_id} was successful.')
-                elif success and _["status"] == payment_service.provider.status.ACCEPTED.value:
+                if success:
                     transaction.pending()
-                    messages.success(request, f'Transaction {transaction_id} was successful.')
-                elif success and _["status"] == payment_service.provider.status.REJECTED.value:
-                    success, _ = payment_service.initiate_payment_retry(transaction)
-                    if success:
-                        transaction.pending()
-                        messages.success(request, f'Transaction {transaction_id} retry was successful.')
-                    else:
-                        transaction.failed()
-                        messages.error(request, f'Transaction {transaction_id} retry failed')
+                    messages.success(request, f'Re initiated payment for order {transaction.order.order_id}.')
             
                 
         except Exception as ex:
