@@ -20,19 +20,20 @@ from django.contrib import admin
 from .models import PaymentRefund, PaymentTransaction, PaymentStatus
 
 class PaymentTransactionAdmin(admin.ModelAdmin):
-    list_display = ('transaction_id', 'external_reference', 'user', 'amount', 'currency', 'created_at', 'updated_at', 'status', 'check_status_button')
+    list_display = ('transaction_id', 'external_reference', 'order', 'user', 'amount', 'currency', 'created_at', 'updated_at', 'status', 'check_status_button')
     list_filter = ('currency', 'created_at')
-    search_fields = ('transaction_id', 'external_reference', 'user__username', 'amount')
+    search_fields = ('transaction_id', 'external_reference', 'order__order_id', 'user__username', 'amount')
     ordering = ('-created_at',)
     readonly_fields = ('transaction_id', 'created_at', 'updated_at')
 
     def get_status_action_text(self, obj):
         last_status = obj.statuses.last()
+        last_sibling_transaction = PaymentTransaction.objects.filter(order=obj.order).last()
         if not obj.statuses.exists():
             return "Initiate", True, "payment:retry_failed_transaction"
         elif last_status.status == PaymentStatus.StatusChoices.PENDING.value:
             return "Check", True, "payment:check_transaction_status"
-        elif last_status.status == PaymentStatus.StatusChoices.FAILED.value:
+        elif last_status.status == PaymentStatus.StatusChoices.FAILED.value and last_sibling_transaction.id == obj.id:
             return "Retry", True, "payment:retry_failed_transaction"
         elif last_status.status == PaymentStatus.StatusChoices.COMPLETED.value or last_status.status == PaymentStatus.StatusChoices.REFUND_FAILED:
             return "Refund", True, "payment:initiate_refund"
@@ -74,7 +75,7 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
     def retry_failed_transaction(request, transaction_id, external_reference):
         payment_service = PaymentService()
         transaction = PaymentTransaction.objects.get(transaction_id=transaction_id)
-        logger.info(f"Retrying transaction for {transaction_id}")
+        logger.info(f"Retrying transaction with ID: {transaction_id}")
         try:
             success, _ = payment_service.verify_transaction(transaction_id)
             if success and _["status"] == payment_service.provider.status.FAILED.value:

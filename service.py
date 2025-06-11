@@ -67,13 +67,12 @@ class PaymentService:
             Exception: If the payment initiation fails, an exception is raised 
                        with the error message.
         """
-        if not transaction:
-            transaction = PaymentTransaction.objects.create(user=user, 
-                                          amount=amount, 
-                                          amount_refundable=amount_refundable, 
-                                          payment_type=payment_type, 
-                                          payment_detail=payment_detail, 
-                                          coupon=coupon, order=order)
+        transaction = PaymentTransaction.objects.create(user=user, 
+                                        amount=amount, 
+                                        amount_refundable=amount_refundable, 
+                                        payment_type=payment_type, 
+                                        payment_detail=payment_detail, 
+                                        coupon=coupon, order=order)
         
         if payment_type.payment_class == PaymentType.PaymentClass.PHONE_NUMBER.value:
             if payment_type.payment_provider == PaymentType.PaymentProviderChoices.MTN_CAMEROON:

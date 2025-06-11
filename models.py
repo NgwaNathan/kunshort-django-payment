@@ -76,7 +76,7 @@ class PaymentTransaction(models.Model):
     payment_detail = models.JSONField(_('Detail'))
     transaction_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)  # Unique identifier for the transaction
     coupon = models.ForeignKey(Coupon, on_delete=models.PROTECT, null=True, blank=True)  # Link to the applied coupon
-    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="payment")  # Link to the associated order
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="payments")  # Link to the associated order
     external_reference = models.CharField(max_length=255, blank=True, null=True)  # External reference for the transaction
     provider = models.CharField(max_length=50, choices=PaymentProvider.choices)
 
