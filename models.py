@@ -3,6 +3,7 @@ from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 import uuid
 from django.core.exceptions import ValidationError
+from django.conf import settings
 
 from core.models import Order
 from gift.models import Coupon
@@ -79,6 +80,11 @@ class PaymentTransaction(models.Model):
     order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="payments")  # Link to the associated order
     external_reference = models.CharField(max_length=255, blank=True, null=True)  # External reference for the transaction
     provider = models.CharField(max_length=50, choices=PaymentProvider.choices)
+
+    def save(self, *args, **kwargs):
+        if not self.provider:
+            self.provider = settings.PAYMENT_PROVIDER
+        super().save(*args, **kwargs)
 
     def pending(self):
         self.save()

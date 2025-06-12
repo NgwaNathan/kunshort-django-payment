@@ -15,7 +15,7 @@ def schedule_notification_for_payment_status(sender, instance, **kwargs):
         send_payment_status_notification.delay(
             user_id=instance.transaction.user.id,
             data={
-                "title": "Payment Status",
+                "title": "🤑 Payment Status",
                 "description": message,
                 "screen": "market-list",
                 "order": json.dumps(camelize(OrderSerializer(instance.transaction.order).data))

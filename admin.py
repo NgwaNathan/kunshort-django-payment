@@ -80,12 +80,16 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
         logger.info(f"Retrying transaction with ID: {transaction_id}")
         try:
             success, _ = payment_service.verify_transaction(transaction_id)
-            if success and _["status"] == payment_service.provider.status.FAILED.value:
+            if not hasattr(_, "status") or _["status"] != payment_service.provider.status.ACCEPTED.value:
                 success, _ = payment_service.initiate_payment_retry(transaction)
                 if success:
                     messages.success(request, f'Re initiated payment for order {transaction.order.order_id}.')
+                else:
+                    logger.info(f"Retrying payment was not successful | {_}")
+                    messages.error(request, f"Retrying payment for transaction {transaction_id} wasn't successful")
+            logger.info(f"Transaction for {transaction_id} completed | {_}")
+            messages.success(request, f"Retrying transaction {transaction_id} failed because transaction was already completed")
             
-                
         except Exception as ex:
             logger.exception(ex)
             transaction.failed()

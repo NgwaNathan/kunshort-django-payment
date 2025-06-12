@@ -18,10 +18,12 @@ urls = {
 }
 
 class FlutterWaveDepositStatus(Enum):
-    ACCEPTED = "ACCEPTED"
-    REJECTED = "REJECTED"
+    ACCEPTED = "success"
+    REJECTED = "failed"
     DUPLICATE_IGNORED = "DUPLICATE_IGNORED"
-    COMPLETED = "COMPLETED"
+    COMPLETED = "success"
+    PENDING = "pending"
+    ERROR = "error"
 
 def get_headers():
     return {
@@ -65,7 +67,7 @@ class FlutterWaveProvider(Provider):
     def verify_transaction(self, ref):
         try:
             response = requests.get(urls["verify_transaction"](ref), headers=get_headers())
-
+            print(response.json())
             if response.status_code == 200:
                 return True, response.json()
             else:

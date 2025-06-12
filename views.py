@@ -1,4 +1,5 @@
 import json
+import logging
 from drf_spectacular.utils import extend_schema
 from rest_framework import viewsets, mixins
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -7,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.conf import settings
 
+from core.serializers import OrderSerializer
 from payment.models import PaymentTransaction, PaymentType, PaymentMethod
 from payment.providers.pawapay import PawapayDepositStatus
 from payment.serializers import PaymentMethodSerializer, UserPaymentTypeSerializer
@@ -20,6 +22,8 @@ from django.views.decorators.http import require_POST
 
 from payment.service import PaymentService
 
+
+logger = logging.getLogger(__name__)
 
 class UserPaymentTypes(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
@@ -108,4 +112,32 @@ def update_pawapay_transaction(request):
         return Response(status=status.HTTP_404_NOT_FOUND)
     
         
+@csrf_exempt
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def retry_failed_transaction(request, transaction_id):
+    payment_service = PaymentService()
 
+    try:
+        transaction = PaymentTransaction.objects.get(transaction_id=transaction_id, user=request.user)
+        logger.info(f"Retrying transaction with ID: {transaction_id}")
+        success, _ = payment_service.verify_transaction(transaction_id)
+        
+        if not hasattr(_, "status") or _["status"] != payment_service.provider.status.ACCEPTED.value:
+            success, _ = payment_service.initiate_payment_retry(transaction)
+            if success:
+                order = OrderSerializer(transaction.order).data
+                return Response(order, status=status.HTTP_200_OK)
+            else:
+                logger.info(f"Retrying payment was not successful | {_}")
+        logger.info(f"Transaction for {transaction_id} completed | {_}")
+        order = OrderSerializer(transaction.order).data
+        return Response(order, status=status.HTTP_200_OK)
+        
+    except Exception as ex:
+        logger.exception(ex)
+        transaction.failed()
+        return Response(status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+    except PaymentTransaction.DoesNotExist:
+        logger.info(f"User with ID {request.user.id} attempted retry payment get transaction {transaction_id} that doesn't own")
+        return Response(status=status.HTTP_400_BAD_REQUEST)
