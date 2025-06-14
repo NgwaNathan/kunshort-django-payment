@@ -67,7 +67,7 @@ class PaymentTransaction(models.Model):
     class PaymentProvider(models.TextChoices):
         FLUTTERWAVE = 'flutterwave', 'Flutterwave'
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="transactions")  # Link to the user making the transaction
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="transactions")  # Link to the user making the transaction
     amount = models.DecimalField(max_digits=10, decimal_places=2)  # Amount of the transaction
     amount_refundable = models.DecimalField(max_digits=10, decimal_places=2, default=0)  # Amount that can be refunded
     currency = models.CharField(max_length=10, default="XAF")  # Currency code (e.g., 'USD', 'EUR')
