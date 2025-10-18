@@ -5,10 +5,12 @@ import uuid
 from django.core.exceptions import ValidationError
 from django.conf import settings
 
-from core.models import Order
-from gift.models import Coupon
+from core.models import Order, SystemConfiguration
+from gift.models import Coupon, CouponApplyChoices, CouponTypeChoices
 from payment.managers import PaymentManager
-from users.models import User
+from users.models import User, UserLoyalty, UserReferal
+from notification.alert_service import alert_payment_success, alert_payment_failed, AlertService
+from notification.models import AlertEventType
 
 
 # Create your models here.
@@ -62,7 +64,7 @@ class PaymentMethod(models.Model):
     # Add other fields as necessary
 
 
-class PaymentTransaction(models.Model):
+class  PaymentTransaction(models.Model):
 
     class PaymentProvider(models.TextChoices):
         FLUTTERWAVE = 'flutterwave', 'Flutterwave'
@@ -90,19 +92,90 @@ class PaymentTransaction(models.Model):
         self.save()
         PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.PENDING.value)
 
-    def success(self):
-        self.save()
-        PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.COMPLETED.value)
+        # Send alert for payment initiation
+        AlertService.send_alert(
+            event_type=AlertEventType.PAYMENT_INITIATED,
+            title='💳 Payment Initiated',
+            message=f'Payment of {self.amount} {self.currency} has been initiated',
+            metadata={
+                'transaction_id': str(self.transaction_id),
+                'amount': str(self.amount),
+                'currency': self.currency,
+                'order_id': self.order.id if self.order else None,
+                'user_phone': self.user.phone_number if self.user else 'Unknown',
+                'provider': self.provider
+            }
+        )
 
+    def success(self):
+        with transaction.atomic:
+            self.save()
+            PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.COMPLETED.value)
+            self.reward_referer()
+
+            # Send alert for successful payment
+            alert_payment_success(
+                self,
+                transaction_id=str(self.transaction_id),
+                amount=str(self.amount),
+                currency=self.currency,
+                order_id=self.order.id if self.order else None,
+                user_phone=self.user.phone_number if self.user else 'Unknown',
+                provider=self.provider,
+                external_reference=self.external_reference or 'N/A'
+            )
+            
+    def reward_referer(self):
+        try:
+            referal = UserReferal.objects.get(user=self.user, is_rewarded=False)
+            user_loyalty, _ = UserLoyalty.objects.get_or_create(user=referal.referer)
+            system_configs = SystemConfiguration.objects.first()
+            user_loyalty.referral_points += system_configs.points_per_referral;
+            
+            if user_loyalty.referral_points >= system_configs.max_referral_for_reward:
+                Coupon.objects.create(type=CouponTypeChoices.percentage, value=50, apply_to=CouponApplyChoices.service_fee, user=referal.referer)
+                user_loyalty.referral_points = 0;
+            referal.is_rewarded = True
+            referal.save()
+            user_loyalty.save();
+        except UserReferal.DoesNotExist:
+            pass
     def failed(self):
         self.save()
         PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.FAILED.value)
+
+        # Send alert for failed payment
+        alert_payment_failed(
+            self,
+            reason='Payment processing failed',
+            transaction_id=str(self.transaction_id),
+            amount=str(self.amount),
+            currency=self.currency,
+            order_id=self.order.id if self.order else None,
+            user_phone=self.user.phone_number if self.user else 'Unknown',
+            provider=self.provider
+        )
     
     def refund_initiated(self, provider_refund_id: str):
         with transaction.atomic:
             self.save()
             PaymentRefund.objects.create(transaction=self, provider_refund_id=provider_refund_id)
             PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.REFUNDED.value)
+
+            # Send alert for refund
+            AlertService.send_alert(
+                event_type=AlertEventType.PAYMENT_REFUNDED,
+                title='💸 Payment Refunded',
+                message=f'Payment of {self.amount} {self.currency} has been refunded',
+                metadata={
+                    'transaction_id': str(self.transaction_id),
+                    'amount': str(self.amount),
+                    'currency': self.currency,
+                    'order_id': self.order.id if self.order else None,
+                    'user_phone': self.user.phone_number if self.user else 'Unknown',
+                    'provider_refund_id': provider_refund_id
+                }
+            )
             
     def refund_failed(self):
         self.save()
