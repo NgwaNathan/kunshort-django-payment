@@ -108,7 +108,7 @@ class  PaymentTransaction(models.Model):
         )
 
     def success(self):
-        with transaction.atomic:
+        with transaction.atomic():
             self.save()
             PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.COMPLETED.value)
             self.reward_referer()
@@ -157,7 +157,7 @@ class  PaymentTransaction(models.Model):
         )
     
     def refund_initiated(self, provider_refund_id: str):
-        with transaction.atomic:
+        with transaction.atomic():
             self.save()
             PaymentRefund.objects.create(transaction=self, provider_refund_id=provider_refund_id)
             PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.REFUNDED.value)
