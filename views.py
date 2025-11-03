@@ -143,7 +143,7 @@ def retry_failed_transaction(request, transaction_id):
         return Response(status=status.HTTP_400_BAD_REQUEST)
 
 @csrf_exempt
-@api_view(['POST'])
+@api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def check_transaction_status(request, transaction_id):
     try:
