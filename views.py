@@ -141,3 +141,23 @@ def retry_failed_transaction(request, transaction_id):
     except PaymentTransaction.DoesNotExist:
         logger.info(f"User with ID {request.user.id} attempted retry payment get transaction {transaction_id} that doesn't own")
         return Response(status=status.HTTP_400_BAD_REQUEST)
+
+@csrf_exempt
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def check_transaction_status(request, transaction_id):
+    try:
+        transaction = PaymentTransaction.objects.get(user=request.user, transaction_id=transaction_id)
+        
+        payment_service = PaymentService()
+        success, _ = payment_service.verify_transaction(transaction.external_reference)
+        if success and _["status"] == payment_service.provider.status.COMPLETED.value:
+            transaction.success()
+            return Response({"status": "COMPLETED"})
+        elif success and _["status"] == payment_service.provider.status.PENDING.value:
+            return Response({"status": "PENDING"})
+        else:
+            return Response({"status": "FAILED"})
+
+    except PaymentTransaction.DoesNotExist:
+        return Response(status=status.HTTP_400_BAD_REQUEST) 

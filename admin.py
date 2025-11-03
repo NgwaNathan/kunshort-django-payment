@@ -60,11 +60,11 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
             return format_html('<h4>{}</h4>', text)
     check_status_button.short_description = 'Action'
 
-    def check_transaction_status(request, transaction_id, external_reference):
-        
-        payment_service = PaymentService()
-        success, _ = payment_service.verify_transaction(external_reference)
+    def check_transaction_status(request, transaction_id):
         transaction = PaymentTransaction.objects.get(transaction_id=transaction_id)
+        payment_service = PaymentService()
+        success, _ = payment_service.verify_transaction(transaction.external_reference)
+        
         if success and _["status"] == payment_service.provider.status.COMPLETED.value:
             transaction.success()
             messages.success(request, f'Transaction {transaction_id} was successful.')

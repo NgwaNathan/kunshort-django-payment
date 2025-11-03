@@ -82,8 +82,9 @@ class PaymentService:
                     transaction.external_reference = _
                     transaction.save()
                     transaction.pending()
-                    return success, "MOMO Payment Initiated"
+                    return success, "MOMO Payment Initiated", transaction
                 else:
+                    logger.info(f"Momo Pay Cameroon failed, {_} for transaction {transaction}")
                     raise Exception(_)
             elif payment_type.payment_provider == PaymentType.PaymentProviderChoices.ORANGE_CAMEROON:
                 success, _ = self.provider.orange_money_pay_cameroon(f"237{payment_detail['phone_number']}", amount, str(transaction.transaction_id))
@@ -91,8 +92,9 @@ class PaymentService:
                     transaction.external_reference = _
                     transaction.save()
                     transaction.pending()
-                    return success, "Orange Mobile Money Payment Initiated"
+                    return success, "Orange Mobile Money Payment Initiated", transaction
                 else:
+                    logger.info(f"Orange Mobile Money Payment Cameroon failed, {_} for transaction {transaction}")
                     raise Exception(_)
                 
     def verify_transaction(self, ref):

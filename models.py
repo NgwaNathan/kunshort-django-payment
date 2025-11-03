@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError
 from django.conf import settings
 
 from core.models import Order, SystemConfiguration
-from gift.models import Coupon, CouponApplyChoices, CouponTypeChoices
+from gift.models import Coupon
 from payment.managers import PaymentManager
 from users.models import User, UserLoyalty, UserReferal
 from notification.alert_service import alert_payment_success, alert_payment_failed, AlertService
@@ -36,6 +36,11 @@ class PaymentType(models.Model):
 
     payment_class = models.CharField(_('Payment Class'), max_length=20, choices=PaymentClass.choices)
     payment_provider = models.CharField(_('Payment Provider'), max_length=20, choices=PaymentProviderChoices.choices)
+    
+    deposit_fee_percentage = models.FloatField(default=0.0)
+    deposit_fee_fixed = models.FloatField(default=0.0)
+    emaketa_deposit_fee_percentage = models.FloatField(default=0.0)
+    emaketa_deposit_fee_fixed = models.FloatField(default=0.0)
 
     def __str__(self):
         return f'{self.name}'
@@ -68,6 +73,7 @@ class  PaymentTransaction(models.Model):
 
     class PaymentProvider(models.TextChoices):
         FLUTTERWAVE = 'flutterwave', 'Flutterwave'
+        PAWAPAY = 'pawapay', 'Pawapay'
 
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="transactions")  # Link to the user making the transaction
     amount = models.DecimalField(max_digits=10, decimal_places=2)  # Amount of the transaction
@@ -130,14 +136,13 @@ class  PaymentTransaction(models.Model):
             referal = UserReferal.objects.get(user=self.user, is_rewarded=False)
             user_loyalty, _ = UserLoyalty.objects.get_or_create(user=referal.referer)
             system_configs = SystemConfiguration.objects.first()
-            user_loyalty.referral_points += system_configs.points_per_referral;
-            
-            if user_loyalty.referral_points >= system_configs.max_referral_for_reward:
-                Coupon.objects.create(type=CouponTypeChoices.percentage, value=50, apply_to=CouponApplyChoices.service_fee, user=referal.referer)
-                user_loyalty.referral_points = 0;
+            user_loyalty.referral_points += system_configs.points_per_referral
+
+            # Mark referral as rewarded and save
             referal.is_rewarded = True
             referal.save()
-            user_loyalty.save();
+            # Signal will handle coupon creation and notification when threshold is reached
+            user_loyalty.save()
         except UserReferal.DoesNotExist:
             pass
     def failed(self):
