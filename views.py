@@ -30,7 +30,7 @@ class UserPaymentTypes(viewsets.ReadOnlyModelViewSet):
     serializer_class = UserPaymentTypeSerializer
 
     def get_queryset(self):
-        return PaymentType.objects.prefetch_related(Prefetch('payment_methods', queryset=PaymentMethod.objects.filter(user=self.request.user)))
+        return PaymentType.objects.filter(is_active=True).prefetch_related(Prefetch('payment_methods', queryset=PaymentMethod.objects.filter(user=self.request.user).order_by('is_default')))
         # return PaymentType.objects.all().prefetch_related('payment_methods')
 
     @extend_schema(description='Get list of payment types added by a user')
