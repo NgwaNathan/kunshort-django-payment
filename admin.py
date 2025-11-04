@@ -81,7 +81,7 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
         try:
             success, _ = payment_service.verify_transaction(transaction_id)
             if not hasattr(_, "status") or _["status"] != payment_service.provider.status.ACCEPTED.value:
-                success, _ = payment_service.initiate_payment_retry(transaction)
+                success, _, _ = payment_service.initiate_payment_retry(transaction)
                 if success:
                     messages.success(request, f'Re initiated payment for order {transaction.order.order_id}.')
                 else:

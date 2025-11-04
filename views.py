@@ -124,7 +124,7 @@ def retry_failed_transaction(request, transaction_id):
         success, _ = payment_service.verify_transaction(transaction_id)
         
         if not hasattr(_, "status") or _["status"] != payment_service.provider.status.ACCEPTED.value:
-            success, _ = payment_service.initiate_payment_retry(transaction)
+            success, _, _ = payment_service.initiate_payment_retry(transaction)
             if success:
                 order = OrderSerializer(transaction.order).data
                 return Response(order, status=status.HTTP_200_OK)

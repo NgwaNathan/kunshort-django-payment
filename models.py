@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django.db import models, transaction
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
@@ -41,6 +42,45 @@ class PaymentType(models.Model):
     deposit_fee_fixed = models.FloatField(default=0.0)
     emaketa_deposit_fee_percentage = models.FloatField(default=0.0)
     emaketa_deposit_fee_fixed = models.FloatField(default=0.0)
+    
+    def calculate_deposit_amount(self, amount):
+        """
+        Calculate the total deposit amount including all fees and charges.
+
+        Formula Derivation:
+        -------------------
+        Variables:
+        - A = Payment Provider Fee (percentage, e.g., 1.5%)
+        - B = Payment Provider Fixed Fee (e.g., 50c)
+        - C = Payment Provider Exchange Fee (percentage, e.g., 1.5%)
+        - D = Payment Provider Fixed Exchange Fee (e.g., 50c)
+        - E = eMaketa Fee (percentage, e.g., 1.5%)
+        - F = eMaketa Fixed Fee (e.g., 50c)
+        - G = eMaketa Exchange Fee (percentage, e.g., 1.5%)
+        - H = eMaketa Fixed Exchange Fee (e.g., 50c)
+        - Y = Base Amount User Should Pay (parameter 'amount')
+        - X = Total Amount to Request (return value)
+
+        Starting Equation:
+        X = Y + (A*X)/100 + B + (C*X)/100 + D + (E*X)/100 + F + (G*X)/100 + H
+
+        Simplification:
+        X = Y + B + D + F + H + AX/100 + CX/100 + EX/100 + GX/100
+        X - AX/100 - CX/100 - EX/100 - GX/100 = Y + B + D + F + H
+        X(1 - A/100 - C/100 - E/100 - G/100) = Y + B + D + F + H
+        X(100 - A - C - E - G)/100 = Y + B + D + F + H
+
+        Final Formula:
+        X = (100Y + 100B + 100D + 100F + 100H) / (100 - A - C - E - G)
+        X = 100(Y + B + D + F + H) / (100 - A - C - E - G)
+
+        This ensures the user pays exactly Y after all fees are deducted.
+        """
+        amount = Decimal(str(amount))
+        numerator = Decimal('100') * (amount + self.deposit_fee_fixed + self.emaketa_deposit_fee_fixed)
+        denominator = Decimal('100') - self.deposit_fee_percentage - self.emaketa_deposit_fee_percentage
+        total_amount = numerator / denominator
+        return total_amount.quantize(Decimal('0.01'))
 
     def __str__(self):
         return f'{self.name}'
