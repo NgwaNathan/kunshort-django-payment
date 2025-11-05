@@ -29,6 +29,7 @@ def get_headers():
 class PawapayDepositStatus(Enum):
     ACCEPTED = "ACCEPTED"
     REJECTED = "REJECTED"
+    PENDING = "SUBMITTED"
     DUPLICATE_IGNORED = "DUPLICATE_IGNORED"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
