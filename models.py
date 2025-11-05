@@ -1,4 +1,5 @@
 from decimal import Decimal
+import logging
 from django.db import models, transaction
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
@@ -12,6 +13,8 @@ from payment.managers import PaymentManager
 from users.models import User, UserLoyalty, UserReferal
 from notification.alert_service import alert_payment_success, alert_payment_failed, AlertService
 from notification.models import AlertEventType
+
+logger = logging.getLogger(__name__)
 
 
 # Create your models here.
@@ -77,8 +80,13 @@ class PaymentType(models.Model):
         This ensures the user pays exactly Y after all fees are deducted.
         """
         amount = Decimal(str(amount))
-        numerator = Decimal('100') * (amount + self.deposit_fee_fixed + self.emaketa_deposit_fee_fixed)
-        denominator = Decimal('100') - self.deposit_fee_percentage - self.emaketa_deposit_fee_percentage
+        deposit_fee_fixed = Decimal(str(self.deposit_fee_fixed))
+        emaketa_deposit_fee_fixed = Decimal(str(self.emaketa_deposit_fee_fixed))
+        deposit_fee_percentage = Decimal(str(self.deposit_fee_percentage))
+        emaketa_deposit_fee_percentage = Decimal(str(self.emaketa_deposit_fee_percentage))
+
+        numerator = Decimal('100') * (amount + deposit_fee_fixed + emaketa_deposit_fee_fixed)
+        denominator = Decimal('100') - deposit_fee_percentage - emaketa_deposit_fee_percentage
         total_amount = numerator / denominator
         return total_amount.quantize(Decimal('0.01'))
 
@@ -135,6 +143,7 @@ class  PaymentTransaction(models.Model):
         super().save(*args, **kwargs)
 
     def pending(self):
+        logger.info(f"Payment status set to PENDING - Transaction: {self.transaction_id}, Amount: {self.amount} {self.currency}")
         self.save()
         PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.PENDING.value)
 
@@ -154,6 +163,7 @@ class  PaymentTransaction(models.Model):
         )
 
     def success(self):
+        logger.info(f"Payment SUCCESSFUL - Transaction: {self.transaction_id}, Amount: {self.amount} {self.currency}, Order: {self.order.id if self.order else 'N/A'}")
         with transaction.atomic():
             self.save()
             PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.COMPLETED.value)
@@ -178,14 +188,18 @@ class  PaymentTransaction(models.Model):
             system_configs = SystemConfiguration.objects.first()
             user_loyalty.referral_points += system_configs.points_per_referral
 
+            logger.info(f"Referral reward granted - Referer: {referal.referer.id}, Referred: {self.user.id}, Points: {system_configs.points_per_referral}")
+
             # Mark referral as rewarded and save
             referal.is_rewarded = True
             referal.save()
             # Signal will handle coupon creation and notification when threshold is reached
             user_loyalty.save()
         except UserReferal.DoesNotExist:
+            logger.debug(f"No unrewarded referral found for user: {self.user.id}")
             pass
     def failed(self):
+        logger.warning(f"Payment FAILED - Transaction: {self.transaction_id}, Amount: {self.amount} {self.currency}, Order: {self.order.id if self.order else 'N/A'}")
         self.save()
         PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.FAILED.value)
 
@@ -202,6 +216,7 @@ class  PaymentTransaction(models.Model):
         )
     
     def refund_initiated(self, provider_refund_id: str):
+        logger.info(f"Payment REFUND initiated - Transaction: {self.transaction_id}, Amount: {self.amount} {self.currency}, Refund ID: {provider_refund_id}")
         with transaction.atomic():
             self.save()
             PaymentRefund.objects.create(transaction=self, provider_refund_id=provider_refund_id)
@@ -223,6 +238,7 @@ class  PaymentTransaction(models.Model):
             )
             
     def refund_failed(self):
+        logger.error(f"Payment REFUND FAILED - Transaction: {self.transaction_id}, Amount: {self.amount} {self.currency}")
         self.save()
         PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.REFUND_FAILED.value)
 

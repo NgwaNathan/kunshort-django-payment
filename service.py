@@ -25,12 +25,13 @@ class PaymentService:
         self.provider = PaymentProviderFactory.get_instance(settings.PAYMENT_PROVIDER)
     
     def initiate_payment_retry(self, transaction: PaymentTransaction):
-        return self.initiate_payment(transaction.user, 
-                                transaction.amount, 
-                                transaction.amount_refundable, 
-                                transaction.payment_type, 
-                                transaction.payment_detail, 
-                                transaction.order, 
+        logger.info(f"Retrying payment - Transaction: {transaction.transaction_id}, Amount: {transaction.amount}")
+        return self.initiate_payment(transaction.user,
+                                transaction.amount,
+                                transaction.amount_refundable,
+                                transaction.payment_type,
+                                transaction.payment_detail,
+                                transaction.order,
                                 transaction.coupon,
                                 transaction)
     
@@ -67,38 +68,53 @@ class PaymentService:
             Exception: If the payment initiation fails, an exception is raised 
                        with the error message.
         """
-        transaction = PaymentTransaction.objects.create(user=user, 
-                                        amount=amount, 
-                                        amount_refundable=amount_refundable, 
-                                        payment_type=payment_type, 
-                                        payment_detail=payment_detail, 
+        logger.info(f"Initiating payment - User: {user.id}, Amount: {amount}, Payment Type: {payment_type.name}, Order: {order.id}")
+
+        transaction = PaymentTransaction.objects.create(user=user,
+                                        amount=amount,
+                                        amount_refundable=amount_refundable,
+                                        payment_type=payment_type,
+                                        payment_detail=payment_detail,
                                         coupon=coupon, order=order)
-        
+
+        logger.debug(f"Payment transaction created - Transaction ID: {transaction.transaction_id}")
+
         if payment_type.payment_class == PaymentType.PaymentClass.PHONE_NUMBER.value:
             if payment_type.payment_provider == PaymentType.PaymentProviderChoices.MTN_CAMEROON:
-                success, _ = self.provider.momo_pay_cameroon(f"237{payment_detail['phone_number']}", amount, str(transaction.transaction_id))
-                logger.info(f"Momo Pay Cameroon: {success}, {_}")
+                logger.info(f"Initiating MTN Mobile Money payment - Phone: 237{payment_detail['phone_number']}, Amount: {amount}")
+                success, response_data = self.provider.momo_pay_cameroon(f"237{payment_detail['phone_number']}", amount, str(transaction.transaction_id))
+                logger.info(f"MTN Mobile Money response - Success: {success}, Data: {response_data}")
                 if success:
-                    transaction.external_reference = _
+                    transaction.external_reference = response_data
                     transaction.save()
                     transaction.pending()
+                    logger.info(f"MTN payment initiated successfully - Transaction: {transaction.transaction_id}, External Ref: {response_data}")
                     return success, "MOMO Payment Initiated", transaction
                 else:
-                    logger.info(f"Momo Pay Cameroon failed, {_} for transaction {transaction}")
-                    raise Exception(_)
+                    logger.error(f"MTN Mobile Money payment failed - Transaction: {transaction.transaction_id}, Error: {response_data}")
+                    raise Exception(response_data)
             elif payment_type.payment_provider == PaymentType.PaymentProviderChoices.ORANGE_CAMEROON:
-                success, _ = self.provider.orange_money_pay_cameroon(f"237{payment_detail['phone_number']}", amount, str(transaction.transaction_id))
+                logger.info(f"Initiating Orange Money payment - Phone: 237{payment_detail['phone_number']}, Amount: {amount}")
+                success, response_data = self.provider.orange_money_pay_cameroon(f"237{payment_detail['phone_number']}", amount, str(transaction.transaction_id))
+                logger.info(f"Orange Money response - Success: {success}, Data: {response_data}")
                 if success:
-                    transaction.external_reference = _
+                    transaction.external_reference = response_data
                     transaction.save()
                     transaction.pending()
+                    logger.info(f"Orange Money payment initiated successfully - Transaction: {transaction.transaction_id}, External Ref: {response_data}")
                     return success, "Orange Mobile Money Payment Initiated", transaction
                 else:
-                    logger.info(f"Orange Mobile Money Payment Cameroon failed, {_} for transaction {transaction}")
-                    raise Exception(_)
+                    logger.error(f"Orange Money payment failed - Transaction: {transaction.transaction_id}, Error: {response_data}")
+                    raise Exception(response_data)
                 
     def verify_transaction(self, ref):
-        return self.provider.verify_transaction(ref)
-    
+        logger.debug(f"Verifying transaction - Reference: {ref}")
+        result = self.provider.verify_transaction(ref)
+        logger.debug(f"Transaction verification result - Reference: {ref}, Result: {result}")
+        return result
+
     def initiate_refund(self, ref, data):
-        return self.provider.initiate_refund(ref, data)
+        logger.info(f"Initiating refund - Reference: {ref}, Data: {data}")
+        result = self.provider.initiate_refund(ref, data)
+        logger.info(f"Refund initiation result - Reference: {ref}, Result: {result}")
+        return result

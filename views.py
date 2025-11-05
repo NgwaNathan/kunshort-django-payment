@@ -30,7 +30,7 @@ class UserPaymentTypes(viewsets.ReadOnlyModelViewSet):
     serializer_class = UserPaymentTypeSerializer
 
     def get_queryset(self):
-        return PaymentType.objects.filter(is_active=True).prefetch_related(Prefetch('payment_methods', queryset=PaymentMethod.objects.filter(user=self.request.user).order_by('is_default')))
+        return PaymentType.objects.filter(is_active=True).prefetch_related(Prefetch('payment_methods', queryset=PaymentMethod.objects.filter(user=self.request.user).order_by('-is_default')))
         # return PaymentType.objects.all().prefetch_related('payment_methods')
 
     @extend_schema(description='Get list of payment types added by a user')
@@ -73,42 +73,63 @@ class UserPaymentMethods(viewsets.GenericViewSet, mixins.CreateModelMixin, mixin
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def update_flutterwave_transaction(request):
+    logger.info("Flutterwave webhook received")
+
     secret_hash = settings.FLUTTERWAVE_PAYMENT["FLW_SECRET_HASH"]
     signature = request.headers.get("Verif-Hash")
+
     if signature == None or (signature != secret_hash):
+        logger.warning(f"Invalid Flutterwave webhook signature. Expected: {secret_hash}, Received: {signature}")
         return Response(status=status.HTTP_401_UNAUTHORIZED)
+
     payload = json.loads(request.body)
+    logger.debug(f"Flutterwave webhook payload: {payload}")
+
     payment_service = PaymentService()
     try:
         transaction = PaymentTransaction.objects.select_related("user").get(external_reference=payload["id"])
-        success, _ = payment_service.verify_transaction(transaction.external_reference)
-        if success and _["status"] == "success":
+        logger.info(f"Processing Flutterwave webhook for transaction: {transaction.transaction_id}, External ref: {payload['id']}")
+
+        success, verification_data = payment_service.verify_transaction(transaction.external_reference)
+
+        if success and verification_data["status"] == "success":
+            logger.info(f"Flutterwave payment successful - Transaction: {transaction.transaction_id}")
             transaction.success()
             return Response(status=status.HTTP_200_OK)
         else:
+            logger.warning(f"Flutterwave payment failed - Transaction: {transaction.transaction_id}, Status: {verification_data.get('status')}")
             transaction.failed()
         return Response(status=status.HTTP_401_UNAUTHORIZED)
     except PaymentTransaction.DoesNotExist as ex:
-
+        logger.error(f"Flutterwave webhook: Transaction not found for external_reference: {payload.get('id')}")
         return Response(status=status.HTTP_404_NOT_FOUND)
     
 @csrf_exempt
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def update_pawapay_transaction(request):
+    logger.info("Pawapay webhook received")
+
     payload = json.loads(request.body)
+    logger.debug(f"Pawapay webhook payload: {payload}")
+
     payment_service = PaymentService()
     try:
         transaction = PaymentTransaction.objects.select_related("user").get(external_reference=payload["depositId"])
-        success, _ = payment_service.verify_transaction(transaction.external_reference)
-        if success and _["status"] == PawapayDepositStatus.COMPLETED.value:
+        logger.info(f"Processing Pawapay webhook for transaction: {transaction.transaction_id}, Deposit ID: {payload['depositId']}")
+
+        success, verification_data = payment_service.verify_transaction(transaction.external_reference)
+
+        if success and verification_data["status"] == PawapayDepositStatus.COMPLETED.value:
+            logger.info(f"Pawapay payment successful - Transaction: {transaction.transaction_id}")
             transaction.success()
             return Response(status=status.HTTP_200_OK)
         else:
+            logger.warning(f"Pawapay payment failed - Transaction: {transaction.transaction_id}, Status: {verification_data.get('status')}")
             transaction.failed()
         return Response(status=status.HTTP_200_OK)
     except PaymentTransaction.DoesNotExist as ex:
-
+        logger.error(f"Pawapay webhook: Transaction not found for depositId: {payload.get('depositId')}")
         return Response(status=status.HTTP_404_NOT_FOUND)
     
         
@@ -146,18 +167,25 @@ def retry_failed_transaction(request, transaction_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def check_transaction_status(request, transaction_id):
+    logger.info(f"Transaction status check requested - User: {request.user.id}, Transaction: {transaction_id}")
+
     try:
         transaction = PaymentTransaction.objects.get(user=request.user, transaction_id=transaction_id)
-        
+
         payment_service = PaymentService()
-        success, _ = payment_service.verify_transaction(transaction.external_reference)
-        if success and _["status"] == payment_service.provider.status.COMPLETED.value:
+        success, verification_data = payment_service.verify_transaction(transaction.external_reference)
+
+        if success and verification_data["status"] == payment_service.provider.status.COMPLETED.value:
+            logger.info(f"Transaction {transaction_id} is COMPLETED")
             transaction.success()
             return Response({"status": "COMPLETED"})
-        elif success and _["status"] == payment_service.provider.status.PENDING.value:
+        elif success and verification_data["status"] == payment_service.provider.status.PENDING.value:
+            logger.info(f"Transaction {transaction_id} is PENDING")
             return Response({"status": "PENDING"})
         else:
+            logger.warning(f"Transaction {transaction_id} is FAILED - Status: {verification_data.get('status')}")
             return Response({"status": "FAILED"})
 
     except PaymentTransaction.DoesNotExist:
+        logger.warning(f"Transaction status check failed - Transaction {transaction_id} not found for user {request.user.id}")
         return Response(status=status.HTTP_400_BAD_REQUEST) 
