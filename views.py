@@ -9,7 +9,7 @@ from rest_framework import status
 from django.conf import settings
 
 from core.serializers import OrderSerializer
-from payment.models import PaymentTransaction, PaymentType, PaymentMethod
+from payment.models import PaymentTransaction, PaymentType, PaymentMethod, PaymentStatus
 from payment.providers.pawapay import PawapayDepositStatus
 from payment.serializers import PaymentMethodSerializer, UserPaymentTypeSerializer
 
@@ -90,15 +90,23 @@ def update_flutterwave_transaction(request):
         transaction = PaymentTransaction.objects.select_related("user").get(external_reference=payload["id"])
         logger.info(f"Processing Flutterwave webhook for transaction: {transaction.transaction_id}, External ref: {payload['id']}")
 
+        # Get current status to avoid duplicate status creation
+        latest_status = transaction.statuses.order_by('-created_at').first()
+        current_status = latest_status.status if latest_status else None
+
         success, verification_data = payment_service.verify_transaction(transaction.external_reference)
 
         if success and verification_data["status"] == "success":
             logger.info(f"Flutterwave payment successful - Transaction: {transaction.transaction_id}")
-            transaction.success()
+            # Only call success() if not already completed
+            if current_status != PaymentStatus.StatusChoices.COMPLETED.value:
+                transaction.success()
             return Response(status=status.HTTP_200_OK)
         else:
             logger.warning(f"Flutterwave payment failed - Transaction: {transaction.transaction_id}, Status: {verification_data.get('status')}")
-            transaction.failed()
+            # Only call failed() if not already failed
+            if current_status != PaymentStatus.StatusChoices.FAILED.value:
+                transaction.failed()
         return Response(status=status.HTTP_401_UNAUTHORIZED)
     except PaymentTransaction.DoesNotExist as ex:
         logger.error(f"Flutterwave webhook: Transaction not found for external_reference: {payload.get('id')}")
@@ -118,15 +126,23 @@ def update_pawapay_transaction(request):
         transaction = PaymentTransaction.objects.select_related("user").get(external_reference=payload["depositId"])
         logger.info(f"Processing Pawapay webhook for transaction: {transaction.transaction_id}, Deposit ID: {payload['depositId']}")
 
+        # Get current status to avoid duplicate status creation
+        latest_status = transaction.statuses.order_by('-created_at').first()
+        current_status = latest_status.status if latest_status else None
+
         success, verification_data = payment_service.verify_transaction(transaction.external_reference)
 
         if success and verification_data["status"] == PawapayDepositStatus.COMPLETED.value:
             logger.info(f"Pawapay payment successful - Transaction: {transaction.transaction_id}")
-            transaction.success()
+            # Only call success() if not already completed
+            if current_status != PaymentStatus.StatusChoices.COMPLETED.value:
+                transaction.success()
             return Response(status=status.HTTP_200_OK)
         else:
             logger.warning(f"Pawapay payment failed - Transaction: {transaction.transaction_id}, Status: {verification_data.get('status')}")
-            transaction.failed()
+            # Only call failed() if not already failed
+            if current_status != PaymentStatus.StatusChoices.FAILED.value:
+                transaction.failed()
         return Response(status=status.HTTP_200_OK)
     except PaymentTransaction.DoesNotExist as ex:
         logger.error(f"Pawapay webhook: Transaction not found for depositId: {payload.get('depositId')}")
@@ -172,12 +188,20 @@ def check_transaction_status(request, transaction_id):
     try:
         transaction = PaymentTransaction.objects.get(user=request.user, transaction_id=transaction_id)
 
+        # Get the current status
+        latest_status = transaction.statuses.order_by('-created_at').first()
+        current_status = latest_status.status if latest_status else None
+
+        logger.debug(f"Transaction {transaction_id} current status: {current_status}")
+
         payment_service = PaymentService()
         success, verification_data = payment_service.verify_transaction(transaction.external_reference)
 
         if success and verification_data["status"] == payment_service.provider.status.COMPLETED.value:
             logger.info(f"Transaction {transaction_id} is COMPLETED")
-            transaction.success()
+            # Only call success() if not already completed
+            if current_status != PaymentStatus.StatusChoices.COMPLETED.value:
+                transaction.success()
             return Response({"status": "COMPLETED"})
         elif success and verification_data["status"] == payment_service.provider.status.PENDING.value:
             logger.info(f"Transaction {transaction_id} is PENDING")
