@@ -29,10 +29,20 @@ def check_pending_transactions():
     cutoff_time = timezone.now() - timedelta(hours=1)
 
     # Get all pending transactions older than 1 hour
-    pending_transactions = PaymentTransaction.objects.filter(
-        statuses__status=PaymentStatus.StatusChoices.PENDING,
+    # We need to filter for transactions where the LATEST status is PENDING
+    from django.db.models import OuterRef, Subquery
+
+    # Subquery to get the latest status for each transaction
+    latest_status_subquery = PaymentStatus.objects.filter(
+        transaction=OuterRef('pk')
+    ).order_by('-created_at').values('status')[:1]
+
+    pending_transactions = PaymentTransaction.objects.annotate(
+        latest_status=Subquery(latest_status_subquery)
+    ).filter(
+        latest_status=PaymentStatus.StatusChoices.PENDING,
         created_at__lt=cutoff_time
-    ).select_related('user', 'order', 'payment_type').distinct()
+    ).select_related('user', 'order', 'payment_type')
 
     total_checked = 0
     total_updated = 0
@@ -106,11 +116,31 @@ def _process_flutterwave_response(transaction: PaymentTransaction, response_data
         logger.info(f"Flutterwave status for transaction {transaction.transaction_id}: {status}")
 
         if status == 'successful' or status == 'success':
-            transaction.success()
-            return 'completed'
+            # Check if transaction is not already completed to avoid duplicate status records
+            latest_status = transaction.statuses.order_by('-created_at').first()
+            if latest_status and latest_status.status != PaymentStatus.StatusChoices.COMPLETED:
+                transaction.success()
+                return 'completed'
+            elif not latest_status:
+                # Edge case: no status exists, mark as completed
+                transaction.success()
+                return 'completed'
+            else:
+                logger.info(f"Transaction {transaction.transaction_id} is already in completed status, skipping")
+                return None
         elif status == 'failed':
-            transaction.failed()
-            return 'failed'
+            # Check if transaction is not already failed to avoid duplicate status records
+            latest_status = transaction.statuses.order_by('-created_at').first()
+            if latest_status and latest_status.status != PaymentStatus.StatusChoices.FAILED:
+                transaction.failed()
+                return 'failed'
+            elif not latest_status:
+                # Edge case: no status exists, mark as failed
+                transaction.failed()
+                return 'failed'
+            else:
+                logger.info(f"Transaction {transaction.transaction_id} is already in failed status, skipping")
+                return None
         else:
             logger.info(f"Transaction {transaction.transaction_id} still pending with status: {status}")
             return None
@@ -137,11 +167,31 @@ def _process_pawapay_response(transaction: PaymentTransaction, response_data: di
         logger.info(f"PawaPay status for transaction {transaction.transaction_id}: {status}")
 
         if status == 'COMPLETED':
-            transaction.success()
-            return 'completed'
+            # Check if transaction is not already completed to avoid duplicate status records
+            latest_status = transaction.statuses.order_by('-created_at').first()
+            if latest_status and latest_status.status != PaymentStatus.StatusChoices.COMPLETED:
+                transaction.success()
+                return 'completed'
+            elif not latest_status:
+                # Edge case: no status exists, mark as completed
+                transaction.success()
+                return 'completed'
+            else:
+                logger.info(f"Transaction {transaction.transaction_id} is already in completed status, skipping")
+                return None
         elif status == 'FAILED' or status == 'REJECTED':
-            transaction.failed()
-            return 'failed'
+            # Check if transaction is not already failed to avoid duplicate status records
+            latest_status = transaction.statuses.order_by('-created_at').first()
+            if latest_status and latest_status.status != PaymentStatus.StatusChoices.FAILED:
+                transaction.failed()
+                return 'failed'
+            elif not latest_status:
+                # Edge case: no status exists, mark as failed
+                transaction.failed()
+                return 'failed'
+            else:
+                logger.info(f"Transaction {transaction.transaction_id} is already in failed status, skipping")
+                return None
         elif status == 'ACCEPTED':
             # Still pending, no action needed
             logger.info(f"Transaction {transaction.transaction_id} still accepted/pending")
