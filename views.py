@@ -1,5 +1,6 @@
 import json
 import logging
+from django.db.utils import IntegrityError
 from drf_spectacular.utils import extend_schema
 from rest_framework import viewsets, mixins
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -44,6 +45,12 @@ class UserPaymentMethods(viewsets.GenericViewSet, mixins.CreateModelMixin, mixin
 
     def get_queryset(self):
         return PaymentMethod.objects.filter(user=self.request.user)
+    
+    def create(self, request, *args, **kwargs):
+        try:
+            super().create(request, *args, **kwargs)
+        except IntegrityError:
+            return Response("You may be trying to add a payment method that may already exists", status=status.HTTP_400_BAD_REQUEST)
     
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()
