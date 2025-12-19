@@ -117,7 +117,7 @@ class PaymentMethod(models.Model):
     # Add other fields as necessary
 
 
-class  PaymentTransaction(models.Model):
+class PaymentTransaction(models.Model):
 
     class PaymentProvider(models.TextChoices):
         FLUTTERWAVE = 'flutterwave', 'Flutterwave'
