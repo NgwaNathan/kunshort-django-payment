@@ -204,16 +204,19 @@ class PaymentTransaction(models.Model):
         PaymentStatus.objects.create(transaction=self, status=PaymentStatus.StatusChoices.FAILED.value)
 
         # Send alert for failed payment
-        alert_payment_failed(
-            self,
-            reason='Payment processing failed',
-            transaction_id=str(self.transaction_id),
-            amount=str(self.amount),
-            currency=self.currency,
-            order_id=self.order.id if self.order else None,
-            user_phone=self.user.phone_number if self.user else 'Unknown',
-            provider=self.provider
-        )
+        try:
+            alert_payment_failed(
+                self,
+                reason='Payment processing failed',
+                transaction_id=str(self.transaction_id),
+                amount=str(self.amount),
+                currency=self.currency,
+                order_id=self.order.id if self.order else None,
+                user_phone=self.user.phone_number if self.user else 'Unknown',
+                provider=self.provider
+            )
+        except Exception as e:
+            logger.warning(f"Could not send payment failed alert: {str(e)}")
     
     def refund_initiated(self, provider_refund_id: str):
         logger.info(f"Payment REFUND initiated - Transaction: {self.transaction_id}, Amount: {self.amount} {self.currency}, Refund ID: {provider_refund_id}")

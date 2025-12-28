@@ -1,4 +1,5 @@
 import json
+import logging
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
@@ -8,6 +9,8 @@ from .models import PaymentStatus
 from notification.tasks import send_payment_status_notification
 from djangorestframework_camel_case.util import camelize
 
+logger = logging.getLogger(__name__)
+
 # Store previous referral points to detect changes
 _user_loyalty_previous_points = {}
 
@@ -15,15 +18,18 @@ _user_loyalty_previous_points = {}
 def schedule_notification_for_payment_status(sender, instance, **kwargs):
     message = get_customer_message_from_payment_status(instance)
     if message:
-        send_payment_status_notification.delay(
-            user_id=instance.transaction.user.id,
-            data={
-                "title": "🤑 Payment Status",
-                "description": message,
-                "screen": "market-list",
-                "order": json.dumps(camelize(OrderSerializer(instance.transaction.order).data))
-            }
-        )
+        try:
+            send_payment_status_notification.delay(
+                user_id=instance.transaction.user.id,
+                data={
+                    "title": "🤑 Payment Status",
+                    "description": message,
+                    "screen": "market-list",
+                    "order": json.dumps(camelize(OrderSerializer(instance.transaction.order).data))
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Could not queue payment status notification: {str(e)}")
 
 
 @receiver(pre_save, sender='users.UserLoyalty')
