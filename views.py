@@ -48,7 +48,7 @@ class UserPaymentMethods(viewsets.GenericViewSet, mixins.CreateModelMixin, mixin
     
     def create(self, request, *args, **kwargs):
         try:
-            super().create(request, *args, **kwargs)
+            return super().create(request, *args, **kwargs)
         except IntegrityError:
             return Response("You may be trying to add a payment method that may already exists", status=status.HTTP_400_BAD_REQUEST)
     
