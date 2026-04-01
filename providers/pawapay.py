@@ -1,5 +1,6 @@
 import json
 from payment.errors import PaymentErrorCode
+from payment.providers.mobile_money_provider import MobileMoneyProvider
 from payment.providers.provider import Provider
 
 from django.conf import settings
@@ -9,6 +10,8 @@ import requests
 from payment.utils import clean_phone_number
 
 from enum import Enum
+
+import typing as t
 
 import logging
 
@@ -34,9 +37,34 @@ class PawapayDepositStatus(Enum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
 
-class PawapayProvider(Provider):
+class PawapayProvider(MobileMoneyProvider):
     def __init__(self):
         self.status = PawapayDepositStatus
+        self.payment_types_supported = {
+            "MTN_CAMEROON": {
+                "country": "CMR",
+                "correspondent": "MTN_MOMO_CMR"
+            },
+            "ORANGE_CAMEROON": {
+                "country": "CMR",
+                "correspondent": "ORANGE_CMR"
+            }
+        }
+        self.payment_type = "MTN_CAMEROON"
+
+
+    def _get_country_and_correspondent(self, number: str) -> t.List[str, str]:
+        if number.startswith("237"):
+            if number.lstrip("237")[:2] in ["67", "65", "68"]:
+                return "CMR", "MTN_MOMO_CMR"
+            if number.lstrip("237")[:2] in ["69"]:
+                return "CMR", "ORANGE_CMR"
+
+
+    def collect(self, number, amount, tx_ref):
+        return self.mobile_money(number, amount, tx_ref, self._get_country_and_correspondent(number)[0],\
+                                  self._get_country_and_correspondent(number)[1])
+
 
     def mobile_money(self, number, amount, tx_ref, country, correspondent):
         try:

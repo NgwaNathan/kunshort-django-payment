@@ -62,7 +62,7 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
 
     def check_transaction_status(request, transaction_id):
         transaction = PaymentTransaction.objects.get(transaction_id=transaction_id)
-        payment_service = PaymentService()
+        payment_service = PaymentService(transaction.payment_type.payment_provider)
         success, _ = payment_service.verify_transaction(transaction.external_reference)
         
         if success and _["status"] == payment_service.provider.status.COMPLETED.value:
@@ -75,8 +75,8 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
         return HttpResponseRedirect(request.META.get('HTTP_REFERER'))
     
     def retry_failed_transaction(request, transaction_id, external_reference):
-        payment_service = PaymentService()
         transaction = PaymentTransaction.objects.get(transaction_id=transaction_id)
+        payment_service = PaymentService(transaction.payment_type.payment_provider)
         logger.info(f"Retrying transaction with ID: {transaction_id}")
         try:
             success, _ = payment_service.verify_transaction(transaction_id)
@@ -98,8 +98,8 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
         return HttpResponseRedirect(request.META.get('HTTP_REFERER'))
     
     def initiate_refund(request, transaction_id, external_reference):
-        payment_service = PaymentService()
         transaction = PaymentTransaction.objects.get(transaction_id=transaction_id)
+        payment_service = PaymentService(transaction.payment_type.payment_provider)
         try:
             success, _ = payment_service.initiate_refund(external_reference, {"amount": transaction.amount_refundable, "comments": "Cancelled"})
             if success:
@@ -117,8 +117,8 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
         return HttpResponseRedirect(request.META.get('HTTP_REFERER'))
     
     def verify_refund_status(request, transaction_id, external_reference):
-        payment_service = PaymentService()
         transaction = PaymentTransaction.objects.select_related('refund').get(transaction_id=transaction_id)
+        payment_service = PaymentService(transaction.payment_type.payment_provider)
         try:
             pass
         except Exception as ex:

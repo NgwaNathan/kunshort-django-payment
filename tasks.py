@@ -50,9 +50,8 @@ def check_pending_transactions():
 
     logger.info(f"Starting pending transaction check. Found {pending_transactions.count()} pending transactions older than 1 hour.")
 
-    payment_service = PaymentService()
-
     for transaction in pending_transactions:
+        payment_service = PaymentService(transaction.payment_type.payment_provider)
         try:
             total_checked += 1
 
@@ -75,8 +74,9 @@ def check_pending_transactions():
             if transaction.provider == PaymentTransaction.PaymentProvider.FLUTTERWAVE:
                 transaction_status = _process_flutterwave_response(transaction, response_data)
             elif transaction.provider == PaymentTransaction.PaymentProvider.PAWAPAY:
-                # Assume PawaPay or other provider
                 transaction_status = _process_pawapay_response(transaction, response_data)
+            elif transaction.provider == PaymentTransaction.PaymentProvider.MOMO_OMO_PAY:
+                transaction_status = _process_momo_omo_response(transaction, response_data)
 
             if transaction_status:
                 total_updated += 1
@@ -202,4 +202,51 @@ def _process_pawapay_response(transaction: PaymentTransaction, response_data: di
 
     except Exception as e:
         logger.exception(f"Error processing PawaPay response for transaction {transaction.transaction_id}: {e}")
+        return None
+
+
+def _process_momo_omo_response(transaction: PaymentTransaction, response_data: dict) -> str:
+    """
+    Process MTN MoMo verification response and update transaction status.
+
+    verify_transaction() calls GET /collection/v1_0/requesttopay/{referenceId}
+    which returns a payload with a top-level "status" field.
+    MTN statuses: PENDING, SUCCESSFUL, FAILED.
+    """
+    try:
+        status = response_data.get('status', '').upper()
+
+        logger.info(f"MTN MoMo status for transaction {transaction.transaction_id}: {status}")
+
+        if status == 'SUCCESSFUL':
+            latest_status = transaction.statuses.order_by('-created_at').first()
+            if latest_status and latest_status.status != PaymentStatus.StatusChoices.COMPLETED:
+                transaction.success()
+                return 'completed'
+            elif not latest_status:
+                transaction.success()
+                return 'completed'
+            else:
+                logger.info(f"Transaction {transaction.transaction_id} already completed, skipping")
+                return None
+        elif status == 'FAILED':
+            latest_status = transaction.statuses.order_by('-created_at').first()
+            if latest_status and latest_status.status != PaymentStatus.StatusChoices.FAILED:
+                transaction.failed()
+                return 'failed'
+            elif not latest_status:
+                transaction.failed()
+                return 'failed'
+            else:
+                logger.info(f"Transaction {transaction.transaction_id} already failed, skipping")
+                return None
+        elif status == 'PENDING':
+            logger.info(f"Transaction {transaction.transaction_id} still pending")
+            return None
+        else:
+            logger.warning(f"Unknown MTN MoMo status for transaction {transaction.transaction_id}: {status}")
+            return None
+
+    except Exception as e:
+        logger.exception(f"Error processing MTN MoMo response for transaction {transaction.transaction_id}: {e}")
         return None

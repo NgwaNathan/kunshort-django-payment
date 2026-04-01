@@ -8,11 +8,11 @@ class PaymentMethodSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PaymentMethod
-        exclude = ('user',)
+        exclude = ('user_id',)
 
     def create(self, validated_data):
         request = self.context.get('request')
-        validated_data['user'] = request.user  # Set the user from the request
+        validated_data['user_id'] = str(request.user.id)
         return super().create(validated_data)
 
 
@@ -36,15 +36,15 @@ class PaymentStatusSerializer(serializers.ModelSerializer):
 class PaymentTransactionSerializer(serializers.ModelSerializer):
     statuses = PaymentStatusSerializer(many=True, read_only=True)
     current_status = serializers.SerializerMethodField()
-    user_email = serializers.EmailField(source='user.email', read_only=True)
     payment_type_name = serializers.CharField(source='payment_type.name', read_only=True)
-    
+
     class Meta:
         model = PaymentTransaction
         fields = [
             'id',
-            'user',
-            'user_email',
+            'user_id',
+            'order_id',
+            'coupon_id',
             'amount',
             'amount_refundable',
             'currency',
@@ -54,11 +54,10 @@ class PaymentTransactionSerializer(serializers.ModelSerializer):
             'payment_type_name',
             'payment_detail',
             'transaction_id',
-            'coupon',
             'external_reference',
             'provider',
             'statuses',
-            'current_status'
+            'current_status',
         ]
 
     def get_current_status(self, obj):
@@ -71,8 +70,6 @@ class PaymentTransactionSerializer(serializers.ModelSerializer):
         return value
 
     def validate_currency(self, value):
-        if value not in ['XAF', 'USD', 'EUR']:  # Add more currencies as needed
+        if value not in ['XAF', 'USD', 'EUR']:
             raise serializers.ValidationError("Invalid currency code")
         return value
-
-
