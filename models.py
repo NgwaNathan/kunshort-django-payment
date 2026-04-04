@@ -86,7 +86,7 @@ class PaymentType(models.Model):
 
 class PaymentMethod(models.Model):
     payment_type = models.ForeignKey(PaymentType, on_delete=models.CASCADE, related_name='payment_methods')
-    user_id = models.CharField(max_length=255)
+    user_id = models.CharField(max_length=255, default='')
     detail = models.JSONField(_('Detail'))
     is_default = models.BooleanField(default=False)
 
@@ -107,7 +107,7 @@ class PaymentTransaction(models.Model):
         MTN_MONEY = 'mtn_money', 'MTN Money'
 
     user_id = models.CharField(max_length=255, null=True, blank=True)
-    order_id = models.CharField(max_length=255)
+    order_id = models.CharField(max_length=255, default='')
     coupon_id = models.CharField(max_length=255, null=True, blank=True)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     amount_refundable = models.DecimalField(max_digits=10, decimal_places=2, default=0)

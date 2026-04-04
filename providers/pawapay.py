@@ -40,6 +40,8 @@ class PawapayDepositStatus(Enum):
 class PawapayProvider(MobileMoneyProvider):
     def __init__(self):
         self.status = PawapayDepositStatus
+        self.success_status = PawapayDepositStatus.COMPLETED.value
+        self.pending_status = PawapayDepositStatus.PENDING.value
         self.payment_types_supported = {
             "MTN_CAMEROON": {
                 "country": "CMR",
@@ -53,7 +55,7 @@ class PawapayProvider(MobileMoneyProvider):
         self.payment_type = "MTN_CAMEROON"
 
 
-    def _get_country_and_correspondent(self, number: str) -> t.List[str, str]:
+    def _get_country_and_correspondent(self, number: str) -> t.Tuple[str, str]:
         if number.startswith("237"):
             if number.lstrip("237")[:2] in ["67", "65", "68"]:
                 return "CMR", "MTN_MOMO_CMR"

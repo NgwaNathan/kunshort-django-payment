@@ -214,6 +214,38 @@ def update_momo_omo_transaction(request):
 
 
 @csrf_exempt
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def update_momo_disbursement_transaction(request):
+    logger.info("MTN MoMo disbursement webhook received")
+
+    payload = json.loads(request.body)
+    logger.debug(f"MTN MoMo disbursement webhook payload: {payload}")
+
+    try:
+        txn = PaymentTransaction.objects.get(external_reference=payload["referenceId"])
+        logger.info(f"Processing MTN MoMo disbursement webhook for transaction: {txn.transaction_id}, Reference: {payload['referenceId']}")
+
+        latest_status = txn.statuses.order_by('-created_at').first()
+        current_status = latest_status.status if latest_status else None
+
+        if payload.get("status") == MomoOmoDepositStatus.SUCCESSFUL.value:
+            logger.info(f"MTN MoMo disbursement successful - Transaction: {txn.transaction_id}")
+            if current_status != PaymentStatus.StatusChoices.COMPLETED.value:
+                txn.success()
+        else:
+            logger.warning(f"MTN MoMo disbursement failed - Transaction: {txn.transaction_id}, Status: {payload.get('status')}")
+            if current_status != PaymentStatus.StatusChoices.FAILED.value:
+                txn.failed()
+
+        return Response(status=status.HTTP_200_OK)
+    except PaymentTransaction.DoesNotExist:
+        logger.error(f"MTN MoMo disbursement webhook: Transaction not found for referenceId: {payload.get('referenceId')}")
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+
+
+@csrf_exempt
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def check_transaction_status(request, transaction_id):
@@ -230,12 +262,12 @@ def check_transaction_status(request, transaction_id):
         payment_service = PaymentService(txn.payment_type.payment_provider)
         success, verification_data = payment_service.verify_transaction(txn.external_reference)
 
-        if success and verification_data["status"] == payment_service.provider.status.COMPLETED.value:
+        if success and verification_data["status"] == payment_service.provider.success_status:
             logger.info(f"Transaction {transaction_id} is COMPLETED")
             if current_status != PaymentStatus.StatusChoices.COMPLETED.value:
                 txn.success()
             return Response({"status": "COMPLETED"})
-        elif success and verification_data["status"] == payment_service.provider.status.PENDING.value:
+        elif success and verification_data["status"] == payment_service.provider.pending_status:
             logger.info(f"Transaction {transaction_id} is PENDING")
             return Response({"status": "PENDING"})
         else:

@@ -1,4 +1,5 @@
 from payment.models import PaymentTransaction, PaymentType
+from payment.providers import SupportedProviders
 from payment.providers.provider_factory import PaymentProviderFactory
 
 from django.conf import settings
@@ -8,15 +9,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 class PaymentService:
-    _instance = None
+    _instances = {}
 
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super(PaymentService, cls).__new__(cls)
-        return cls._instance
+    def __new__(cls, provider, *args, **kwargs):
+        if provider not in cls._instances:
+            cls._instances[provider] = super(PaymentService, cls).__new__(cls)
+        return cls._instances[provider]
 
-    def __init__(self, provider: str):
-        self.provider = PaymentProviderFactory.get_instance(settings.PROVIDER[provider])
+    def __init__(self, provider: SupportedProviders):
+        self.provider = PaymentProviderFactory.get_instance(settings.PROVIDERS[provider.upper()])
 
     def initiate_payment_retry(self, transaction: PaymentTransaction):
         logger.info(f"Retrying payment - Transaction: {transaction.transaction_id}, Amount: {transaction.amount}")
@@ -99,14 +100,26 @@ class PaymentService:
                     logger.error(f"Orange Money payment failed - Transaction: {transaction.transaction_id}, Error: {response_data}")
                     raise Exception(response_data)
 
+    def initiate_disbursement(self, phone_number: str, amount: str, tx_ref: str):
+        logger.info(f"Initiating disbursement - Phone: {phone_number}, Amount: {amount}, Ref: {tx_ref}")
+        success, response_data = self.provider.transfer(phone_number, amount, tx_ref)
+        logger.info(f"Disbursement response - Success: {success}, Data: {response_data}")
+        return success, response_data
+
+    def verify_disbursement(self, ref):
+        logger.debug(f"Verifying disbursement - Reference: {ref}")
+        result = self.provider.verify_disbursement(ref)
+        logger.debug(f"Disbursement verification result - Reference: {ref}, Result: {result}")
+        return result
+
     def verify_transaction(self, ref):
         logger.debug(f"Verifying transaction - Reference: {ref}")
         result = self.provider.verify_transaction(ref)
         logger.debug(f"Transaction verification result - Reference: {ref}, Result: {result}")
         return result
 
-    def initiate_refund(self, ref, data):
-        logger.info(f"Initiating refund - Reference: {ref}, Data: {data}")
-        result = self.provider.initiate_refund(ref, data)
-        logger.info(f"Refund initiation result - Reference: {ref}, Result: {result}")
+    def initiate_refund(self, original_reference_id: str, amount: str, tx_ref: str):
+        logger.info(f"Initiating refund - Original ref: {original_reference_id}, Amount: {amount}, Tx ref: {tx_ref}")
+        result = self.provider.initiate_refund(original_reference_id, amount, tx_ref)
+        logger.info(f"Refund initiation result - Original ref: {original_reference_id}, Result: {result}")
         return result

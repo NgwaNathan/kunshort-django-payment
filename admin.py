@@ -20,15 +20,15 @@ from django.contrib import admin
 from .models import PaymentRefund, PaymentTransaction, PaymentStatus
 
 class PaymentTransactionAdmin(admin.ModelAdmin):
-    list_display = ('transaction_id', 'external_reference', 'order', 'user', 'amount', 'currency', 'created_at', 'updated_at', 'status', 'check_status_button')
+    list_display = ('transaction_id', 'external_reference', 'order_id', 'user_id', 'amount', 'currency', 'created_at', 'updated_at', 'status', 'check_status_button')
     list_filter = ('currency', 'created_at')
-    search_fields = ('transaction_id', 'external_reference', 'order__order_id', 'user__username', 'amount')
+    search_fields = ('transaction_id', 'external_reference', 'order_id', 'user_id', 'amount')
     ordering = ('-created_at',)
     readonly_fields = ('transaction_id', 'created_at', 'updated_at')
 
     def get_status_action_text(self, obj):
         last_status = obj.statuses.last()
-        last_sibling_transaction = PaymentTransaction.objects.filter(order=obj.order).last()
+        last_sibling_transaction = PaymentTransaction.objects.filter(order_id=obj.order_id).last()
         if not obj.statuses.exists():
             return "Initiate", True, "payment:retry_failed_transaction"
         elif last_status.status == PaymentStatus.StatusChoices.PENDING.value:
@@ -83,7 +83,7 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
             if not hasattr(_, "status") or _["status"] != payment_service.provider.status.ACCEPTED.value:
                 success, _, _ = payment_service.initiate_payment_retry(transaction)
                 if success:
-                    messages.success(request, f'Re initiated payment for order {transaction.order.order_id}.')
+                    messages.success(request, f'Re initiated payment for order {transaction.order_id}.')
                 else:
                     logger.info(f"Retrying payment was not successful | {_}")
                     messages.error(request, f"Retrying payment for transaction {transaction_id} wasn't successful")
