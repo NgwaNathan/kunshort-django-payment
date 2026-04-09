@@ -67,6 +67,7 @@ class PaymentService:
             payment_detail=payment_detail,
             coupon_id=coupon_id,
             order_id=order_id,
+            transaction_type=PaymentTransaction.TransactionType.COLLECTION,
         )
 
         logger.debug(f"Payment transaction created - Transaction ID: {transaction.transaction_id}")
@@ -131,47 +132,33 @@ class PaymentService:
             f"Amount: {amount}, Order: {order_id}"
         )
 
-        # Create the transaction record FIRST, before calling MTN.
-        # This guarantees a DB record exists even if the MTN call fails,
-        # giving us a complete audit trail of every attempted payout.
-        # We store transaction_type in payment_detail so the polling task
-        # knows to use verify_disbursement() instead of verify_transaction().
         transaction = PaymentTransaction.objects.create(
             user_id=user_id,
             amount=amount,
-            amount_refundable=0,        # disbursements are not refundable via this flow
+            amount_refundable=0,
             payment_type=payment_type,
-            payment_detail={
-                "phone_number": phone_number,
-                "transaction_type": "disbursement",  # flag read by the signal receiver in tasks.py
-            },
+            payment_detail={"phone_number": phone_number},
             order_id=order_id,
+            transaction_type=PaymentTransaction.TransactionType.DISBURSEMENT,
         )
 
         logger.debug(f"Disbursement transaction created - Transaction ID: {transaction.transaction_id}")
 
-        # Call MTN to initiate the transfer.
-        # tx_ref is our internal transaction_id — MTN stores it as externalId
-        # so we can match it if they ever send a callback.
         success, response_data = self.provider.transfer(
             phone_number, amount, str(transaction.transaction_id)
         )
         logger.info(f"MTN disbursement response - Success: {success}, Data: {response_data}")
 
         if success:
-            # response_data is the reference_id (UUID) we sent as X-Reference-Id.
-            # Save it as external_reference — this is what verify_disbursement() uses.
             transaction.external_reference = response_data
             transaction.save()
-            transaction.pending()   # saves status + fires payment_initiated signal → starts polling
+            transaction.pending()
             logger.info(
                 f"Disbursement initiated successfully - Transaction: {transaction.transaction_id}, "
                 f"External Ref: {response_data}"
             )
             return True, "Disbursement Initiated", transaction
         else:
-            # MTN rejected the request — mark it failed immediately so the DB
-            # reflects reality and we're not left with a ghost PENDING record.
             transaction.failed()
             logger.error(
                 f"Disbursement failed - Transaction: {transaction.transaction_id}, "
@@ -185,14 +172,80 @@ class PaymentService:
         logger.debug(f"Disbursement verification result - Reference: {ref}, Result: {result}")
         return result
 
+    def verify_refund(self, ref):
+        logger.debug(f"Verifying refund - Reference: {ref}")
+        result = self.provider.verify_refund(ref)
+        logger.debug(f"Refund verification result - Reference: {ref}, Result: {result}")
+        return result
+
     def verify_transaction(self, ref):
         logger.debug(f"Verifying transaction - Reference: {ref}")
         result = self.provider.verify_transaction(ref)
         logger.debug(f"Transaction verification result - Reference: {ref}, Result: {result}")
         return result
 
-    def initiate_refund(self, original_reference_id: str, amount: str, tx_ref: str):
-        logger.info(f"Initiating refund - Original ref: {original_reference_id}, Amount: {amount}, Tx ref: {tx_ref}")
-        result = self.provider.initiate_refund(original_reference_id, amount, tx_ref)
-        logger.info(f"Refund initiation result - Original ref: {original_reference_id}, Result: {result}")
-        return result
+    def initiate_refund(self,
+                        user_id: str,
+                        original_transaction: PaymentTransaction,
+                        amount: str):
+        """
+        Initiates a refund against a previously collected payment.
+
+        Args:
+            user_id (str): ID of the user being refunded.
+            original_transaction (PaymentTransaction): The original collection transaction
+                being refunded. Provides the external_reference MTN needs, the payment_type,
+                and the order_id for linking.
+            amount (str): Amount to refund as a string.
+
+        Returns:
+            tuple: (success: bool, message: str, transaction: PaymentTransaction)
+
+        Raises:
+            Exception: If the refund initiation fails.
+        """
+        logger.info(
+            f"Initiating refund - User: {user_id}, "
+            f"Original transaction: {original_transaction.transaction_id}, Amount: {amount}"
+        )
+
+        # Create a new transaction record for this refund.
+        # We link it to the same order as the original so you can see
+        # the full payment history for an order in one place.
+        transaction = PaymentTransaction.objects.create(
+            user_id=user_id,
+            amount=amount,
+            amount_refundable=0,
+            payment_type=original_transaction.payment_type,
+            payment_detail=original_transaction.payment_detail,
+            order_id=original_transaction.order_id,
+            transaction_type=PaymentTransaction.TransactionType.REFUND,
+        )
+
+        logger.debug(f"Refund transaction created - Transaction ID: {transaction.transaction_id}")
+
+        # original_transaction.external_reference is the X-Reference-Id we sent
+        # when the collection was initiated — MTN calls this referenceIdToRefund.
+        success, response_data = self.provider.initiate_refund(
+            original_reference_id=original_transaction.external_reference,
+            amount=amount,
+            tx_ref=str(transaction.transaction_id),
+        )
+        logger.info(f"MTN refund response - Success: {success}, Data: {response_data}")
+
+        if success:
+            transaction.external_reference = response_data
+            transaction.save()
+            transaction.pending()
+            logger.info(
+                f"Refund initiated successfully - Transaction: {transaction.transaction_id}, "
+                f"External Ref: {response_data}"
+            )
+            return True, "Refund Initiated", transaction
+        else:
+            transaction.failed()
+            logger.error(
+                f"Refund failed - Transaction: {transaction.transaction_id}, "
+                f"Error: {response_data}"
+            )
+            raise Exception(response_data)

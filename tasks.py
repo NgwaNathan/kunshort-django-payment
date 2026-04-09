@@ -22,17 +22,20 @@ _MOMO_POLL_MAX_RETRIES = 6
 
 @shared_task(
     bind=True,
-    name='payment.poll_momo_collection',
+    name='payment.poll_momo_transaction',
     max_retries=_MOMO_POLL_MAX_RETRIES,
 )
-def poll_momo_collection(self, transaction_id: str):
+def poll_momo_transaction(self, transaction_id: str):
     """
-    Background task that polls MTN MoMo for the status of a single collection
-    (money coming IN — user paying the platform).
+    Single background task that polls MTN MoMo for the status of any transaction.
 
-    Calls verify_transaction() which hits GET /collection/v2_0/payment/{ref}.
-    Retries with exponential backoff until MTN returns SUCCESSFUL or FAILED.
-    If max retries are exhausted, the nightly sweep handles it.
+    Reads transaction.transaction_type to decide which MTN endpoint to call:
+      - COLLECTION   → verify_transaction()   → GET /collection/v2_0/payment/{ref}
+      - DISBURSEMENT → verify_disbursement()  → GET /disbursement/v1_0/transfer/{ref}
+      - REFUND       → verify_disbursement()  → GET /disbursement/v1_0/refund/{ref}
+
+    Adding a new transaction type in future only requires a new elif here —
+    no new task needed.
     """
 
     # 1. Fetch the transaction — if missing, nothing to poll
@@ -41,95 +44,7 @@ def poll_momo_collection(self, transaction_id: str):
             transaction_id=transaction_id
         )
     except PaymentTransaction.DoesNotExist:
-        logger.error(f"poll_momo_collection: transaction {transaction_id} not found, aborting")
-        return
-
-    # 2. Idempotency guard — stop if already resolved
-    # Uses values_list to fetch only the status string, not the full object
-    latest_status = txn.statuses.order_by('-created_at').values_list('status', flat=True).first()
-
-    if latest_status in (
-        PaymentStatus.StatusChoices.COMPLETED.value,
-        PaymentStatus.StatusChoices.FAILED.value,
-    ):
-        logger.info(
-            f"poll_momo_collection: transaction {transaction_id} already "
-            f"resolved with status '{latest_status}', stopping poll"
-        )
-        return
-
-    # 3. Call MTN collection status endpoint
-    logger.info(
-        f"poll_momo_collection: checking MTN status for collection {transaction_id} "
-        f"(attempt {self.request.retries + 1}/{_MOMO_POLL_MAX_RETRIES + 1})"
-    )
-
-    payment_service = PaymentService(txn.payment_type.payment_provider)
-    success, verification_data = payment_service.verify_transaction(txn.external_reference)
-
-    # 4. Act on the result
-    if success:
-        mtn_status = verification_data.get('status', '')
-
-        if mtn_status == MomoOmoDepositStatus.SUCCESSFUL.value:
-            logger.info(f"poll_momo_collection: collection {transaction_id} SUCCESSFUL")
-            txn.success()
-            return
-
-        elif mtn_status == MomoOmoDepositStatus.FAILED.value:
-            logger.warning(f"poll_momo_collection: collection {transaction_id} FAILED by MTN")
-            txn.failed()
-            return
-
-        elif mtn_status == MomoOmoDepositStatus.PENDING.value:
-            logger.info(f"poll_momo_collection: collection {transaction_id} still PENDING, will retry")
-
-        else:
-            logger.warning(
-                f"poll_momo_collection: unexpected MTN status '{mtn_status}' "
-                f"for collection {transaction_id}, will retry"
-            )
-    else:
-        logger.error(
-            f"poll_momo_collection: API call failed for collection {transaction_id}: "
-            f"{verification_data}, will retry"
-        )
-
-    # 5. Retry with exponential backoff + jitter
-    delay = (_MOMO_POLL_BASE_DELAY * (2 ** self.request.retries)) + random.uniform(0, 5)
-
-    try:
-        raise self.retry(countdown=delay)
-    except MaxRetriesExceededError:
-        logger.warning(
-            f"poll_momo_collection: max retries ({_MOMO_POLL_MAX_RETRIES}) exhausted "
-            f"for collection {transaction_id}. Leaving as PENDING for nightly sweep."
-        )
-
-
-@shared_task(
-    bind=True,
-    name='payment.poll_momo_disbursement',
-    max_retries=_MOMO_POLL_MAX_RETRIES,
-)
-def poll_momo_disbursement(self, transaction_id: str):
-    """
-    Background task that polls MTN MoMo for the status of a single disbursement
-    (money going OUT — platform paying a user).
-
-    Calls verify_disbursement() which hits GET /disbursement/v1_0/transfer/{ref}.
-    This is a completely different MTN endpoint from collections — that is the
-    only reason this is a separate task from poll_momo_collection.
-    Everything else is identical.
-    """
-
-    # 1. Fetch the transaction — if missing, nothing to poll
-    try:
-        txn = PaymentTransaction.objects.select_related('payment_type').get(
-            transaction_id=transaction_id
-        )
-    except PaymentTransaction.DoesNotExist:
-        logger.error(f"poll_momo_disbursement: transaction {transaction_id} not found, aborting")
+        logger.error(f"poll_momo_transaction: transaction {transaction_id} not found, aborting")
         return
 
     # 2. Idempotency guard — stop if already resolved
@@ -140,46 +55,58 @@ def poll_momo_disbursement(self, transaction_id: str):
         PaymentStatus.StatusChoices.FAILED.value,
     ):
         logger.info(
-            f"poll_momo_disbursement: disbursement {transaction_id} already "
+            f"poll_momo_transaction: {txn.transaction_type} {transaction_id} already "
             f"resolved with status '{latest_status}', stopping poll"
         )
         return
 
-    # 3. Call MTN disbursement status endpoint
+    # 3. Call the correct MTN endpoint based on transaction_type
     logger.info(
-        f"poll_momo_disbursement: checking MTN status for disbursement {transaction_id} "
-        f"(attempt {self.request.retries + 1}/{_MOMO_POLL_MAX_RETRIES + 1})"
+        f"poll_momo_transaction: checking MTN status for {txn.transaction_type} "
+        f"{transaction_id} (attempt {self.request.retries + 1}/{_MOMO_POLL_MAX_RETRIES + 1})"
     )
 
     payment_service = PaymentService(txn.payment_type.payment_provider)
-    success, verification_data = payment_service.verify_disbursement(txn.external_reference)
+
+    if txn.transaction_type == PaymentTransaction.TransactionType.COLLECTION:
+        success, verification_data = payment_service.verify_transaction(txn.external_reference)
+    elif txn.transaction_type == PaymentTransaction.TransactionType.DISBURSEMENT:
+        success, verification_data = payment_service.verify_disbursement(txn.external_reference)
+    elif txn.transaction_type == PaymentTransaction.TransactionType.REFUND:
+        success, verification_data = payment_service.verify_refund(txn.external_reference)
+    else:
+        logger.error(
+            f"poll_momo_transaction: unknown transaction_type '{txn.transaction_type}' "
+            f"for transaction {transaction_id}, aborting"
+        )
+        return
 
     # 4. Act on the result
     if success:
         mtn_status = verification_data.get('status', '')
 
         if mtn_status == MomoOmoDepositStatus.SUCCESSFUL.value:
-            logger.info(f"poll_momo_disbursement: disbursement {transaction_id} SUCCESSFUL")
+            logger.info(f"poll_momo_transaction: {txn.transaction_type} {transaction_id} SUCCESSFUL")
             txn.success()
             return
 
         elif mtn_status == MomoOmoDepositStatus.FAILED.value:
-            logger.warning(f"poll_momo_disbursement: disbursement {transaction_id} FAILED by MTN")
+            logger.warning(f"poll_momo_transaction: {txn.transaction_type} {transaction_id} FAILED by MTN")
             txn.failed()
             return
 
         elif mtn_status == MomoOmoDepositStatus.PENDING.value:
-            logger.info(f"poll_momo_disbursement: disbursement {transaction_id} still PENDING, will retry")
+            logger.info(f"poll_momo_transaction: {txn.transaction_type} {transaction_id} still PENDING, will retry")
 
         else:
             logger.warning(
-                f"poll_momo_disbursement: unexpected MTN status '{mtn_status}' "
-                f"for disbursement {transaction_id}, will retry"
+                f"poll_momo_transaction: unexpected MTN status '{mtn_status}' "
+                f"for {txn.transaction_type} {transaction_id}, will retry"
             )
     else:
         logger.error(
-            f"poll_momo_disbursement: API call failed for disbursement {transaction_id}: "
-            f"{verification_data}, will retry"
+            f"poll_momo_transaction: API call failed for {txn.transaction_type} "
+            f"{transaction_id}: {verification_data}, will retry"
         )
 
     # 5. Retry with exponential backoff + jitter
@@ -189,33 +116,22 @@ def poll_momo_disbursement(self, transaction_id: str):
         raise self.retry(countdown=delay)
     except MaxRetriesExceededError:
         logger.warning(
-            f"poll_momo_disbursement: max retries ({_MOMO_POLL_MAX_RETRIES}) exhausted "
-            f"for disbursement {transaction_id}. Leaving as PENDING for nightly sweep."
+            f"poll_momo_transaction: max retries ({_MOMO_POLL_MAX_RETRIES}) exhausted "
+            f"for {txn.transaction_type} {transaction_id}. Leaving as PENDING for nightly sweep."
         )
 
-
-# ------------------------------------------------------------------ #
-# Signal receiver — routes to the correct polling task
-# ------------------------------------------------------------------ #
 
 @receiver(payment_initiated, sender=PaymentTransaction)
 def start_momo_polling_on_payment_initiated(sender, transaction, **kwargs):
     """
     Listens for the payment_initiated signal fired by PaymentTransaction.pending().
-
-    Routes to the correct polling task based on transaction_type stored in
-    payment_detail:
-      - "disbursement" → poll_momo_disbursement (uses /disbursement endpoint)
-      - anything else  → poll_momo_collection   (uses /collection endpoint)
-
-    Does nothing for non-MTN transactions.
+    Starts poll_momo_transaction for any MTN transaction — collection, disbursement,
+    or refund. Does nothing for non-MTN providers.
     """
 
-    # Only MTN MoMo needs polling — other providers (Flutterwave, PawaPay) use webhooks
     if transaction.payment_type.payment_provider != PaymentType.PaymentProviderChoices.MTN_CAMEROON:
         return
 
-    # If there's no external_reference the polling task can't call MTN — skip it
     if not transaction.external_reference:
         logger.error(
             f"start_momo_polling: transaction {transaction.transaction_id} has no "
@@ -223,33 +139,20 @@ def start_momo_polling_on_payment_initiated(sender, transaction, **kwargs):
         )
         return
 
-    # Read the transaction_type flag we stored in payment_detail during initiate_disbursement().
-    # For collections this key won't exist, so .get() returns None — that's fine.
-    is_disbursement = transaction.payment_detail.get("transaction_type") == "disbursement"
-
-    if is_disbursement:
-        poll_momo_disbursement.apply_async(
-            args=[str(transaction.transaction_id)],
-            countdown=_MOMO_POLL_BASE_DELAY,
-        )
-        logger.info(
-            f"start_momo_polling: scheduled DISBURSEMENT poll for "
-            f"{transaction.transaction_id} in {_MOMO_POLL_BASE_DELAY}s"
-        )
-    else:
-        poll_momo_collection.apply_async(
-            args=[str(transaction.transaction_id)],
-            countdown=_MOMO_POLL_BASE_DELAY,
-        )
-        logger.info(
-            f"start_momo_polling: scheduled COLLECTION poll for "
-            f"{transaction.transaction_id} in {_MOMO_POLL_BASE_DELAY}s"
-        )
+    poll_momo_transaction.apply_async(
+        args=[str(transaction.transaction_id)],
+        countdown=_MOMO_POLL_BASE_DELAY,
+    )
+    logger.info(
+        f"start_momo_polling: scheduled poll for {transaction.transaction_type} "
+        f"{transaction.transaction_id} in {_MOMO_POLL_BASE_DELAY}s"
+    )
 
 
 @shared_task(
     name='payment.check_pending_transactions',
     autoretry_for=(Exception,),
+    
     retry_kwargs={"max_retries": 3, "countdown": 300},
     retry_backoff=True
 )

@@ -106,6 +106,11 @@ class PaymentTransaction(models.Model):
         ORANGE_MONEY = 'orange_money', 'Orange Money'
         MTN_MONEY = 'mtn_money', 'MTN Money'
 
+    class TransactionType(models.TextChoices):
+        COLLECTION = 'collection', 'Collection'
+        DISBURSEMENT = 'disbursement', 'Disbursement'
+        REFUND = 'refund', 'Refund'
+
     user_id = models.CharField(max_length=255, null=True, blank=True)
     order_id = models.CharField(max_length=255, default='')
     coupon_id = models.CharField(max_length=255, null=True, blank=True)
@@ -119,6 +124,11 @@ class PaymentTransaction(models.Model):
     transaction_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     external_reference = models.CharField(max_length=255, blank=True, null=True)
     provider = models.CharField(max_length=50, choices=PaymentProvider.choices)
+    transaction_type = models.CharField(
+        max_length=20,
+        choices=TransactionType.choices,
+        default=TransactionType.COLLECTION,
+    )
 
     objects = PaymentManager
 

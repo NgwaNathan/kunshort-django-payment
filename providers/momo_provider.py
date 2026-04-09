@@ -168,12 +168,59 @@ class MomoProvider(MobileMoneyProvider):
     def collect(self, number, amount, tx_ref):
         return self._collect(number, amount, tx_ref)
 
+    def get_disbursement_account_balance(self) -> tuple:
+        """
+        Fetches the current balance of the disbursement account.
+
+        Returns:
+            (True, {"availableBalance": "...", "currency": "..."}) on success
+            (False, error_message) on failure
+        """
+        try:
+            response = requests.get(
+                f"{settings.MTN_DISBURSEMENT['BASE_URL']}/disbursement/v1_0/account/balance",
+                headers=_get_disbursement_headers(),
+            )
+            logger.info(f"MTN Disbursement account balance status: {response.status_code}")
+            if response.status_code == 200:
+                return True, response.json()
+            else:
+                logger.error(f"MTN Disbursement account balance failed: {response.content}")
+                return False, PaymentErrorCode.VERIFY_TRANSACTION_FAILURE.message
+        except Exception as ex:
+            logger.exception(ex)
+            return False, PaymentErrorCode.VERIFY_TRANSACTION_FAILURE.message
+
     def transfer(self, number: str, amount: str, tx_ref: str) -> tuple:
         try:
+            # Pre-flight balance check — only runs if CHECK_BALANCE_BEFORE_TRANSFER is True.
+            # To disable: set MTN_DISBURSEMENT_CHECK_BALANCE=false in your environment,
+            # or set "CHECK_BALANCE_BEFORE_TRANSFER": False in your settings directly.
+            if settings.MTN_DISBURSEMENT.get('CHECK_BALANCE_BEFORE_TRANSFER', True):
+                success, balance_data = self.get_disbursement_account_balance()
+                if not success:
+                    logger.error(f"MTN Disbursement balance check failed before transfer: {balance_data}")
+                    return False, PaymentErrorCode.PAYMENT_INITIATION_FAILURE.message
+
+                available = float(balance_data.get('availableBalance', 0))
+                requested = float(amount)
+
+                if requested > available:
+                    logger.error(
+                        f"MTN Disbursement insufficient balance - "
+                        f"requested: {requested}, available: {available}"
+                    )
+                    return False, PaymentErrorCode.INSUFFICIENT_BALANCE.message
+
+                logger.info(
+                    f"MTN Disbursement balance check passed - "
+                    f"requested: {requested}, available: {available}"
+                )
+
             reference_id = str(uuid.uuid4())
 
             data = {
-                "amount": amount,
+                "amount": str(amount),
                 "currency": "EUR" if settings.MTN_DISBURSEMENT.get('TARGET_ENVIRONMENT') == 'sandbox' else "XAF",
                 "externalId": tx_ref,
                 "payee": {
@@ -221,6 +268,21 @@ class MomoProvider(MobileMoneyProvider):
         # MTN MoMo only handles MTN network payments, not Orange Money.
         logger.warning("MTN MoMo provider does not support Orange Money payments.")
         return False, PaymentErrorCode.PAYMENT_INITIATION_FAILURE.message
+
+    def verify_refund(self, ref: str) -> tuple:
+        try:
+            response = requests.get(
+                f"{settings.MTN_DISBURSEMENT['BASE_URL']}/disbursement/v1_0/refund/{ref}",
+                headers=_get_disbursement_headers(),
+            )
+            logger.info(f"MTN Refund verify status: {response.status_code}, ref: {ref}")
+            if response.status_code == 200:
+                return True, response.json()
+            else:
+                return False, PaymentErrorCode.VERIFY_TRANSACTION_FAILURE.message
+        except Exception as ex:
+            logger.exception(ex)
+            return False, PaymentErrorCode.VERIFY_TRANSACTION_FAILURE.message
 
     def verify_transaction(self, ref):
         """
