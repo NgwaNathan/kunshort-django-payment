@@ -1,26 +1,26 @@
 # kunshort-django-payment
 
-A reusable Django app for processing mobile money payments. It abstracts multiple payment providers behind a single `PaymentService` interface and handles collections (charging a customer), disbursements (paying out), and refunds — all with a full audit trail in the database.
+A reusable Django app for processing mobile money payments. It exposes a single `PaymentService` that your project calls directly from its own views. The package handles the provider integrations, the database audit trail, background status polling, and payment lifecycle signals — your project controls the URLs, authentication, and response shapes.
 
 ---
 
 ## Table of Contents
 
-- [Features](#features)
+- [How it works](#how-it-works)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Database setup](#database-setup)
 - [Providers overview](#providers-overview)
-- [Usage](#usage)
+- [Using PaymentService in your views](#using-paymentservice-in-your-views)
   - [Initiating a payment (collection)](#initiating-a-payment-collection)
   - [Initiating a disbursement (payout)](#initiating-a-disbursement-payout)
   - [Initiating a refund](#initiating-a-refund)
   - [Verifying a transaction](#verifying-a-transaction)
   - [Retrying a failed payment](#retrying-a-failed-payment)
-- [URL endpoints](#url-endpoints)
-- [Signals](#signals)
-- [Background polling (Celery)](#background-polling-celery)
+- [Webhook endpoints (optional)](#webhook-endpoints-optional)
+- [Reacting to payment events (signals)](#reacting-to-payment-events-signals)
+- [Background polling — MTN MoMo (Celery)](#background-polling--mtn-momo-celery)
 - [Models reference](#models-reference)
 - [Fee calculation](#fee-calculation)
 - [Adding a new provider](#adding-a-new-provider)
@@ -28,15 +28,29 @@ A reusable Django app for processing mobile money payments. It abstracts multipl
 
 ---
 
-## Features
+## How it works
 
-- **Single service interface** — `PaymentService` works the same way regardless of which provider is behind it
-- **Multiple providers** — MTN MoMo, PawaPay, and Flutterwave are fully implemented; Orange Money is stubbed
-- **Collections, disbursements, refunds** — all three money movements are supported (provider support varies, see table below)
-- **Signals** — `payment_initiated`, `payment_succeeded`, `payment_failed`, `payment_refunded`, `payment_refund_failed` let your app react to payment events without coupling into this package
-- **Status polling** — a Celery task polls MTN MoMo for async status updates; other providers use webhooks
-- **Fee model** — configurable percentage and fixed fees per `PaymentType`; a closed-form formula calculates the gross amount to charge so the net received equals exactly what was requested
-- **Full audit trail** — every status transition is a separate `PaymentStatus` row with a timestamp; invalid transitions are rejected at the model layer
+This package sits between your project and the payment providers. Your project is responsible for:
+
+- **Your own views** — you decide the URL structure, authentication, and response format
+- **Your own serializers** — you decide what data to return to the client
+- **Reacting to events** — connect to the signals this package fires to update orders, send receipts, etc.
+
+This package is responsible for:
+
+- Calling the correct provider API (MTN MoMo, PawaPay, Flutterwave, Orange Money)
+- Creating and updating `PaymentTransaction` records in your database
+- Enforcing valid status transitions (`PENDING → COMPLETED → REFUNDED`, etc.)
+- Polling MTN MoMo in the background via Celery
+- Providing ready-made webhook handlers for provider callbacks (optional)
+
+```
+Your view  →  PaymentService  →  Provider (MTN / PawaPay / Flutterwave)
+                   ↓
+           PaymentTransaction (DB)
+                   ↓
+              Signals fired  →  Your signal handlers (update order, send email, etc.)
+```
 
 ---
 
@@ -47,8 +61,8 @@ A reusable Django app for processing mobile money payments. It abstracts multipl
 - Django REST Framework 3.14+
 - drf-spectacular 0.27+
 - Celery 5.3+
-- django-redis 5.4+ (or any Django cache backend)
-- Pillow 10.0+
+- django-redis 5.4+ (or any Django cache backend — used to cache MTN access tokens)
+- Pillow 10.0+ (for the `PaymentType.logo` image field)
 
 ---
 
@@ -68,21 +82,24 @@ uv add kunshort-django-payment
 
 ## Configuration
 
-Add the app to `INSTALLED_APPS` and provide settings for whichever providers you use.
+### 1. Add to INSTALLED_APPS
 
 ```python
 # settings.py
-
 INSTALLED_APPS = [
     ...
     "kunshort_payment",
 ]
+```
 
-# Maps the provider key used in PaymentService(...) to the internal provider name.
+### 2. Declare which providers you use
+
+```python
+# Maps the key you pass to PaymentService(...) to the internal provider name.
 # Only include providers you actually use.
 PROVIDERS = {
     "MTN_CAMEROON": "MTN_CAMEROON",
-    "ORANGE_CAMEROON": "ORANGE_CAMEROON",
+    # "ORANGE_CAMEROON": "ORANGE_CAMEROON",
     # "FLUTTERWAVE": "FLUTTERWAVE",
     # "PAWAPAY": "PAWAPAY",
 }
@@ -91,7 +108,9 @@ PROVIDERS = {
 PAYMENT_PROVIDER = "mtn_money"
 ```
 
-Provider-specific settings (only required if you enable that provider):
+### 3. Add provider credentials
+
+Only include the blocks for providers you have enabled above.
 
 ```python
 # MTN MoMo — Collection (Request to Pay)
@@ -101,10 +120,10 @@ MTN_MOMO = {
     "API_KEY": "<your-api-key>",
     "SUBSCRIPTION_KEY": "<your-collection-subscription-key>",
     "TARGET_ENVIRONMENT": "sandbox",  # "production" in live
-    "CALLBACK_URL": "",               # Optional webhook URL
+    "CALLBACK_URL": "",               # Your webhook URL for MTN to call back
 }
 
-# MTN MoMo — Disbursement & Refund
+# MTN MoMo — Disbursement & Refund (only needed if you use transfer/refund)
 MTN_DISBURSEMENT = {
     "BASE_URL": "https://sandbox.momodeveloper.mtn.com",
     "API_USER_ID": "<your-disbursement-api-user-id>",
@@ -124,12 +143,15 @@ PAWAPAY = {
 # Flutterwave
 FLUTTERWAVE_PAYMENT = {
     "SECRET_KEY": "<your-flutterwave-secret-key>",
+    "FLW_SECRET_HASH": "<your-webhook-secret-hash>",  # Used to verify incoming webhook signatures
 }
 ```
 
 ---
 
 ## Database setup
+
+Run migrations to create the payment tables:
 
 ```bash
 python manage.py migrate kunshort_payment
@@ -139,109 +161,113 @@ python manage.py migrate kunshort_payment
 
 ## Providers overview
 
-The package ships with four providers. All are equal in the architecture — `PaymentService` delegates to whichever one you configured. The distinction is which operations each provider has implemented:
+All providers implement the same `MobileMoneyProvider` interface so `PaymentService` works identically regardless of which one is behind it. The distinction is which operations each provider supports:
 
-| Provider | Class | Collection | Disbursement | Refund | Notes |
-|----------|-------|-----------|--------------|--------|-------|
-| `MTN_CAMEROON` | `MomoProvider` | Yes | Yes | Yes | Direct MTN MoMo API; tokens auto-refreshed in cache |
-| `ORANGE_CAMEROON` | `OrangeMoneyProvider` | Stub | Stub | Stub | Not yet implemented |
-| `PAWAPAY` | `PawapayProvider` | Yes | — | Yes | Auto-detects MTN vs Orange by phone prefix |
-| `FLUTTERWAVE` | `FlutterWaveProvider` | Yes | — | Yes | Flutterwave mobile money (Francophone Africa) |
+| Provider | Collection | Disbursement | Refund | Notes |
+|----------|-----------|--------------|--------|-------|
+| `MTN_CAMEROON` | Yes | Yes | Yes | Direct MTN MoMo API; tokens auto-refreshed in cache |
+| `ORANGE_CAMEROON` | Stub | — | — | Not yet implemented |
+| `PAWAPAY` | Yes | — | Yes | Auto-detects MTN vs Orange by phone prefix |
+| `FLUTTERWAVE` | Yes | — | Yes | Flutterwave mobile money (Francophone Africa) |
 
-Which provider handles a request is determined entirely by how you instantiate `PaymentService`:
-
-```python
-from kunshort_payment.service import PaymentService
-
-mtn_service      = PaymentService("MTN_CAMEROON")
-pawapay_service  = PaymentService("PAWAPAY")
-flutter_service  = PaymentService("FLUTTERWAVE")
-```
-
-`PaymentService` is a per-provider singleton — calling `PaymentService("MTN_CAMEROON")` twice returns the same instance.
+If you call a disbursement on a provider that does not support it (e.g. PawaPay), the service raises an `Exception` with a message explaining which provider to use instead.
 
 ---
 
-## Usage
+## Using PaymentService in your views
+
+Import `PaymentService` and call it directly from your own views. You own the URL, the authentication, and the response — the package handles everything below that.
+
+```python
+from kunshort_payment import PaymentService
+```
 
 ### Initiating a payment (collection)
 
-Charge a customer's mobile wallet.
-
 ```python
-from kunshort_payment.service import PaymentService
+# views.py — your own view, your own auth
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from kunshort_payment import PaymentService
 from kunshort_payment.models import PaymentType
 
-payment_type = PaymentType.objects.get(payment_provider="mtn_cameroon", is_active=True)
 
-# Swap in any provider — the call looks identical
-service = PaymentService("MTN_CAMEROON")
-# service = PaymentService("PAWAPAY")
-# service = PaymentService("FLUTTERWAVE")
+class InitiatePaymentView(APIView):
+    permission_classes = [IsAuthenticated]
 
-success, message, transaction = service.initiate_payment(
-    user_id="user-123",
-    amount=5000,
-    amount_refundable=5000,
-    payment_type=payment_type,
-    payment_detail={"phone_number": "670000000"},  # without country code
-    order_id="order-456",
-    coupon_id=None,
-)
+    def post(self, request):
+        payment_type = PaymentType.objects.get(
+            payment_provider="mtn_cameroon",
+            is_active=True,
+        )
+        service = PaymentService("MTN_CAMEROON")
+
+        success, message, transaction = service.initiate_payment(
+            user_id=str(request.user.id),
+            amount=request.data["amount"],
+            amount_refundable=request.data["amount"],
+            payment_type=payment_type,
+            payment_detail={"phone_number": request.data["phone_number"]},
+            order_id=request.data["order_id"],
+        )
+
+        return Response({"transaction_id": str(transaction.transaction_id)})
 ```
 
-Returns `(True, "<Provider> Payment Initiated", <PaymentTransaction>)` on success, or raises `Exception` with the provider error message on failure.
+`initiate_payment` returns `(True, message, PaymentTransaction)` on success, or raises `Exception` with the provider error on failure. The transaction is persisted immediately with status `PENDING`. The provider's webhook or the Celery polling task will update it to `COMPLETED` or `FAILED`.
 
-The transaction is persisted immediately with `transaction_type=COLLECTION` and set to `PENDING`. The provider's async callback or the Celery polling task will update it to `COMPLETED` or `FAILED`.
+**Phone numbers** must be passed without the country code — the service adds the `237` prefix before sending to the provider.
 
 ---
 
 ### Initiating a disbursement (payout)
 
-Send money out to a phone number — for example to pay out a seller. Currently only `MTN_CAMEROON` has this implemented.
+Send money out to a phone number — for payouts, commissions, etc. Only `MTN_CAMEROON` currently supports disbursements.
 
 ```python
 service = PaymentService("MTN_CAMEROON")
 
 success, message, transaction = service.initiate_disbursement(
-    user_id="user-123",
-    phone_number="670000000",  # without country code
-    amount="2500",
+    user_id=str(request.user.id),
+    phone_number=request.data["phone_number"],  # without country code
+    amount=str(request.data["amount"]),
     payment_type=payment_type,
-    order_id="order-789",
+    order_id=request.data["order_id"],
 )
 ```
 
-Returns `(True, "Disbursement Initiated", <PaymentTransaction>)` on success, or raises `Exception` on failure.
+Returns `(True, "Disbursement Initiated", PaymentTransaction)` on success, or raises `Exception` on failure.
 
-If `CHECK_BALANCE_BEFORE_TRANSFER` is `True` in `MTN_DISBURSEMENT` settings, the provider checks the disbursement account balance before sending and returns an error if funds are insufficient.
+If `CHECK_BALANCE_BEFORE_TRANSFER` is `True` in `MTN_DISBURSEMENT` settings, the provider checks the disbursement account balance before sending and raises an error if funds are insufficient.
 
 ---
 
 ### Initiating a refund
 
-Refund a previous collection back to the original payer. Currently only `MTN_CAMEROON` has this wired through `PaymentService`.
+Refund a previous collection back to the payer.
 
 ```python
 from kunshort_payment.models import PaymentTransaction
 
-original = PaymentTransaction.objects.get(transaction_id="<uuid>")
+original = PaymentTransaction.objects.get(transaction_id=request.data["transaction_id"])
 service = PaymentService("MTN_CAMEROON")
 
 success, message, refund_transaction = service.initiate_refund(
-    user_id="user-123",
+    user_id=str(request.user.id),
     original_transaction=original,
-    amount="5000",
+    amount=str(request.data["amount"]),
 )
 ```
 
-A new `PaymentTransaction` record with `transaction_type=REFUND` is created and linked to the same `order_id` as the original, so you can see the full payment history for an order in one place.
+A new `PaymentTransaction` record with `transaction_type=REFUND` is created and linked to the same `order_id` as the original, giving you the full payment history per order in one place.
 
 ---
 
 ### Verifying a transaction
 
-Check the current status of a transaction directly with the provider.
+Check the current status of any transaction directly with the provider.
 
 ```python
 success, data = service.verify_transaction(transaction.external_reference)
@@ -249,13 +275,13 @@ success, data = service.verify_disbursement(transaction.external_reference)
 success, data = service.verify_refund(transaction.external_reference)
 ```
 
-Each returns `(True, <dict>)` on a successful API call, or `(False, error_message)` on failure. The `data` dict is the raw provider response.
+Each returns `(True, <dict>)` on a successful API call, or `(False, error_message)` on failure. The `data` dict contains the raw provider response.
 
 ---
 
 ### Retrying a failed payment
 
-Re-attempt a failed collection using the same transaction details.
+Re-attempt a failed collection using the same details as the original transaction.
 
 ```python
 success, message, new_transaction = service.initiate_payment_retry(original_transaction)
@@ -265,91 +291,112 @@ A new `PaymentTransaction` row is created — the original is left unchanged.
 
 ---
 
-## URL endpoints
+## Webhook endpoints (optional)
 
-Include the package URLs in your project:
+When a payment completes, providers call a webhook URL on your server to notify you. This package ships with ready-made webhook handlers for each provider. You can include them in your project's URL configuration:
 
 ```python
 # urls.py
+from django.urls import path, include
+
 urlpatterns = [
     ...
     path("payments/", include("kunshort_payment.urls")),
 ]
 ```
 
+This registers:
+
 | Method | Path | Description |
 |--------|------|-------------|
-| GET/POST | `payments/user-payment-types/` | List active payment types |
-| GET/POST | `payments/user-payment-method/` | Manage saved payment methods |
-| POST | `payments/flutterwave/transaction-update/` | Flutterwave webhook callback |
-| POST | `payments/pawapay/transaction-update/` | PawaPay webhook callback |
-| POST | `payments/momo-omo/transaction-update/` | MTN MoMo collection webhook |
-| POST | `payments/momo-disbursement/transaction-update/` | MTN disbursement webhook |
-| GET | `payments/check_transaction_status/<transaction_id>/` | Poll current status |
-| GET | `payments/retry-payment/<transaction_id>/` | User-triggered retry |
+| POST | `payments/flutterwave/webhook/` | Flutterwave payment callback |
+| POST | `payments/pawapay/webhook/` | PawaPay payment callback |
+| POST | `payments/momo/collection/webhook/` | MTN MoMo collection callback |
+| POST | `payments/momo/disbursement/webhook/` | MTN MoMo disbursement callback |
+
+**These are optional.** If you prefer to handle provider callbacks in your own views, or if your project uses a different URL structure, you can skip this include entirely and write your own webhook handlers using `PaymentService` and the transaction models directly.
+
+**MTN MoMo note:** MTN is asynchronous — it does not always call the webhook reliably. The package includes a Celery polling task as a fallback (see below).
 
 ---
 
-## Signals
+## Reacting to payment events (signals)
 
-Connect to these signals in your app to react to payment events.
+Connect to these Django signals in your app to react to payment lifecycle events. This is how you bridge between the payment package and the rest of your application (updating orders, sending receipts, releasing inventory, etc.) without coupling your code to the package's internals.
 
 ```python
+# your_app/signals.py
 from django.dispatch import receiver
-from kunshort_payment.signals import payment_succeeded, payment_failed, payment_refunded
+from kunshort_payment import payment_succeeded, payment_failed, payment_refunded
 
 @receiver(payment_succeeded)
 def on_payment_success(sender, transaction, **kwargs):
-    # Mark the order as paid, send a receipt, etc.
     Order.objects.filter(id=transaction.order_id).update(status="paid")
+    # send_receipt_email(transaction)
 
 @receiver(payment_failed)
 def on_payment_failed(sender, transaction, **kwargs):
+    # notify the user, release reserved stock, etc.
     pass
 
 @receiver(payment_refunded)
 def on_refund(sender, transaction, provider_refund_id, **kwargs):
-    pass
+    Order.objects.filter(id=transaction.order_id).update(status="refunded")
 ```
 
-| Signal | Extra kwargs |
-|--------|-------------|
-| `payment_initiated` | `transaction` |
-| `payment_succeeded` | `transaction` |
-| `payment_failed` | `transaction` |
-| `payment_refunded` | `transaction`, `provider_refund_id` |
-| `payment_refund_failed` | `transaction` |
+Make sure your signal handlers are imported when Django starts — register them in your app's `AppConfig.ready()`:
+
+```python
+# your_app/apps.py
+class YourAppConfig(AppConfig):
+    def ready(self):
+        import your_app.signals  # noqa: F401
+```
+
+All available signals:
+
+| Signal | Fired when | Extra kwargs |
+|--------|-----------|-------------|
+| `payment_initiated` | Transaction created and set to pending | `transaction` |
+| `payment_succeeded` | Transaction marked completed | `transaction` |
+| `payment_failed` | Transaction marked failed | `transaction` |
+| `payment_refunded` | Refund successfully initiated | `transaction`, `provider_refund_id` |
+| `payment_refund_failed` | Refund attempt failed | `transaction` |
 
 ---
 
-## Background polling (Celery)
+## Background polling — MTN MoMo (Celery)
 
-MTN MoMo is asynchronous — it returns HTTP 202 immediately and processes the payment in the background. The package includes a Celery task to poll for the result. **This only applies to MTN MoMo.** PawaPay and Flutterwave use webhooks instead (see the webhook endpoints above).
+MTN MoMo is asynchronous — it accepts a payment request with HTTP 202 and processes it in the background. The package uses Celery to poll for the final status. **This only applies to MTN MoMo.** PawaPay and Flutterwave notify your server via webhooks instead.
 
 ### How it works
 
 1. `PaymentTransaction.pending()` fires the `payment_initiated` signal.
-2. The `start_momo_polling_on_payment_initiated` receiver schedules `poll_momo_transaction` 15 seconds later — but only for MTN transactions.
-3. `poll_momo_transaction` reads `transaction.transaction_type` to call the correct MTN endpoint:
+2. A signal receiver in `tasks.py` schedules the `poll_momo_transaction` Celery task 15 seconds later — only for MTN transactions.
+3. The task checks `transaction.transaction_type` to call the right MTN endpoint:
    - `COLLECTION` → `GET /collection/v2_0/payment/{ref}`
    - `DISBURSEMENT` → `GET /disbursement/v1_0/transfer/{ref}`
    - `REFUND` → `GET /disbursement/v1_0/refund/{ref}`
 4. If still `PENDING`, the task retries up to 6 times with exponential backoff (15 s → 30 s → 60 s → …).
-5. If retries are exhausted, the transaction stays `PENDING` for the nightly sweep.
+5. If retries are exhausted the transaction stays `PENDING`. A nightly Celery Beat task (`check_pending_transactions`) sweeps up any remaining stuck transactions.
 
 ### Setup
+
+Add the nightly sweep to your Celery Beat schedule:
 
 ```python
 # celery.py
 from celery.schedules import crontab
 
 app.conf.beat_schedule = {
-    "check-pending-transactions-nightly": {
+    "payment-pending-sweep": {
         "task": "payment.check_pending_transactions",
         "schedule": crontab(hour=0, minute=0),
     },
 }
 ```
+
+Start your workers:
 
 ```bash
 celery -A your_project worker -l info
@@ -362,7 +409,7 @@ celery -A your_project beat -l info
 
 ### `PaymentType`
 
-Configured by an admin — represents a payment channel (e.g. "MTN MoMo Cameroon").
+Configured via the Django admin — represents a payment channel (e.g. "MTN MoMo Cameroon").
 
 | Field | Description |
 |-------|-------------|
@@ -373,8 +420,8 @@ Configured by an admin — represents a payment channel (e.g. "MTN MoMo Cameroon
 | `is_active` | Whether this type is available to users |
 | `deposit_fee_percentage` | Provider fee as a percentage |
 | `deposit_fee_fixed` | Provider fixed fee |
-| `platform_deposit_fee_percentage` | Platform fee as a percentage |
-| `platform_deposit_fee_fixed` | Platform fixed fee |
+| `platform_deposit_fee_percentage` | Your platform fee as a percentage |
+| `platform_deposit_fee_fixed` | Your platform fixed fee |
 
 ### `PaymentTransaction`
 
@@ -382,20 +429,20 @@ One row per money movement — collection, disbursement, or refund.
 
 | Field | Description |
 |-------|-------------|
-| `transaction_id` | UUID, internal identifier |
+| `transaction_id` | UUID — your internal identifier |
 | `external_reference` | Reference ID returned by the provider |
 | `transaction_type` | `collection`, `disbursement`, or `refund` |
 | `provider` | Which provider processed it |
 | `amount` | Amount charged / disbursed / refunded |
-| `amount_refundable` | Maximum refundable amount |
+| `amount_refundable` | Maximum refundable portion |
 | `currency` | ISO currency code (default `XAF`) |
 | `order_id` | Your application's order identifier |
-| `user_id` | Your application's user identifier |
-| `payment_detail` | JSON blob (e.g. `{"phone_number": "670000000"}`) |
+| `user_id` | Your application's user identifier (stored as string — no FK assumption) |
+| `payment_detail` | JSON blob — e.g. `{"phone_number": "670000000"}` |
 
 ### `PaymentStatus`
 
-Append-only status log. Valid transitions:
+Append-only status log — one row per transition. Valid transitions:
 
 ```
 PENDING → COMPLETED | FAILED
@@ -404,11 +451,11 @@ FAILED → FAILED | COMPLETED
 REFUND_FAILED → REFUND_FAILED | REFUNDED
 ```
 
-The first status for any transaction must be `PENDING`. Invalid transitions raise a `ValidationError`.
+The first status for any transaction must be `PENDING`. Invalid transitions raise `ValidationError`.
 
 ### `PaymentRefund`
 
-Linked one-to-one to the refund `PaymentTransaction`. Stores either a `provider_refund_id` (automated) or a `manual_refund_id` (manual override). Exactly one must be set.
+Linked one-to-one to the refund `PaymentTransaction`. Either `provider_refund_id` (automated) or `manual_refund_id` (manual override) must be set — exactly one, not both.
 
 ---
 
@@ -419,23 +466,23 @@ Linked one-to-one to the refund `PaymentTransaction`. Stores either a `provider_
 ```python
 payment_type = PaymentType.objects.get(...)
 gross = payment_type.calculate_deposit_amount(5000)
-# gross > 5000; the difference covers provider + platform fees
+# gross > 5000; the extra covers provider + platform fees
 ```
 
 Formula:
 
 ```
-gross = 100 × (net + fixed_fees) / (100 - percentage_fees)
+gross = 100 × (net + fixed_fees) / (100 − percentage_fees)
 ```
 
 ---
 
 ## Adding a new provider
 
-1. Create a class in `src/kunshort_payment/providers/` that extends `MobileMoneyProvider` and implements `collect`, `transfer`, `verify_transaction`, and `initiate_refund`.
-2. Add a constant for it in `SupportedProviders` (`providers/__init__.py`).
-3. Register it in `PaymentProviderFactory.get_instance()`.
-4. Add its key to `PROVIDERS` in your settings.
+1. Create a class in `src/kunshort_payment/providers/` that extends `MobileMoneyProvider` and implements `collect`, `verify_transaction`, and `initiate_refund`. Override `transfer` too if the provider supports disbursements.
+2. Add a constant for it in `SupportedProviders` in `providers/__init__.py`.
+3. Register it in `PaymentProviderFactory.get_instance()` in `providers/provider_factory.py`.
+4. Add its key to `PROVIDERS` in your project's settings.
 
 ---
 
@@ -445,4 +492,4 @@ gross = 100 × (net + fixed_fees) / (100 - percentage_fees)
 uv run pytest -v
 ```
 
-Tests use an in-memory SQLite database and mock all HTTP calls — no external services needed. Test files are in `src/kunshort_payment/tests/`.
+Tests use an in-memory SQLite database and mock all HTTP calls — no external services or credentials needed.

@@ -67,13 +67,12 @@ class PawapayProvider(MobileMoneyProvider):
                                   self._get_country_and_correspondent(number)[1])
 
 
-    def mobile_money(self, number, amount, tx_ref, country, correspondent):
+    def mobile_money(self, number, amount: float, tx_ref, country, correspondent):
         try:
-            from datetime import datetime
-            import pytz
+            from datetime import datetime, timezone
             data = {
                 "depositId": tx_ref,
-                "amount": int(round(float(amount), 0)),
+                "amount": amount,
                 "currency": "XAF",
                 "correspondent": correspondent,
                 "payer": {
@@ -82,7 +81,7 @@ class PawapayProvider(MobileMoneyProvider):
                     },
                     "type": "MSISDN"
                 },
-                "customerTimestamp": datetime.now(pytz.utc).isoformat(),
+                "customerTimestamp": datetime.now(timezone.utc).isoformat(),
                 "statementDescription": "For your eMaketa list",
                 "country": country,
                 "metadata": []

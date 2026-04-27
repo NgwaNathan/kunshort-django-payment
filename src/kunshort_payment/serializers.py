@@ -1,27 +1,6 @@
 from rest_framework import serializers
 
-from kunshort_payment.models import PaymentType, PaymentMethod, PaymentTransaction, PaymentStatus
-
-
-class PaymentMethodSerializer(serializers.ModelSerializer):
-    payment_type = serializers.PrimaryKeyRelatedField(queryset=PaymentType.objects.all())
-
-    class Meta:
-        model = PaymentMethod
-        exclude = ('user_id',)
-
-    def create(self, validated_data):
-        request = self.context.get('request')
-        validated_data['user_id'] = str(request.user.id)
-        return super().create(validated_data)
-
-
-class UserPaymentTypeSerializer(serializers.ModelSerializer):
-    payment_methods = PaymentMethodSerializer(many=True)
-
-    class Meta:
-        model = PaymentType
-        fields = '__all__'
+from kunshort_payment.models import PaymentTransaction, PaymentStatus
 
 
 class PaymentStatusSerializer(serializers.ModelSerializer):

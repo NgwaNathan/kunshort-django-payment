@@ -390,9 +390,13 @@ dependencies = [
     { name = "djangorestframework" },
     { name = "drf-spectacular" },
     { name = "pillow" },
+    { name = "requests" },
+]
+
+[package.optional-dependencies]
+dev = [
     { name = "pytest" },
     { name = "pytest-django" },
-    { name = "requests" },
 ]
 
 [package.metadata]
@@ -403,10 +407,11 @@ requires-dist = [
     { name = "djangorestframework", specifier = ">=3.14" },
     { name = "drf-spectacular", specifier = ">=0.27" },
     { name = "pillow", specifier = ">=10.0" },
-    { name = "pytest", specifier = ">=9.0.3" },
-    { name = "pytest-django", specifier = ">=4.8" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
+    { name = "pytest-django", marker = "extra == 'dev'", specifier = ">=4.8" },
     { name = "requests", specifier = ">=2.32" },
 ]
+provides-extras = ["dev"]
 
 [[package]]
 name = "packaging"

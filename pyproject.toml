@@ -1,7 +1,7 @@
 [project]
 name = "kunshort-django-payment"
 version = "0.1.0"
-description = "Reusable Django payment app supporting MTN MoMo and Orange Money"
+description = "Reusable Django payment app with a unified service interface across multiple payment providers"
 requires-python = ">=3.11"
 dependencies = [
     "django>=5.0",
@@ -11,6 +11,10 @@ dependencies = [
     "django-redis>=5.4",
     "pillow>=10.0",
     "drf-spectacular>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
     "pytest>=9.0.3",
     "pytest-django>=4.8",
 ]
