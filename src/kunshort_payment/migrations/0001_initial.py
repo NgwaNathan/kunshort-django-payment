@@ -29,7 +29,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='users', to=settings.AUTH_USER_MODEL)),
-                ('payment_type', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='payment_methods', to='payment.paymenttype')),
+                ('payment_type', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='payment_methods', to='kunshort_payment.paymenttype')),
             ],
         ),
     ]

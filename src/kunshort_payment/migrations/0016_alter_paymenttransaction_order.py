@@ -8,7 +8,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('core', '0021_systemconfiguration_delivery_within'),
-        ('payment', '0015_alter_paymenttransaction_order'),
+        ('kunshort_payment', '0015_alter_paymenttransaction_order'),
     ]
 
     operations = [

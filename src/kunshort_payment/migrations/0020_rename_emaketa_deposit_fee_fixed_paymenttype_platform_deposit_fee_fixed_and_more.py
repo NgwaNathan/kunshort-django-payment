@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('payment', '0019_alter_paymenttransaction_provider'),
+        ('kunshort_payment', '0019_alter_paymenttransaction_provider'),
     ]
 
     operations = [
@@ -60,7 +60,7 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='paymenttransaction',
             name='payment_type',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, to='payment.paymenttype'),
+            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, to='kunshort_payment.paymenttype'),
         ),
         migrations.AlterField(
             model_name='paymenttransaction',

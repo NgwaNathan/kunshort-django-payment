@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('payment', '0002_paymentmethod_detail_paymentmethod_is_default_and_more'),
+        ('kunshort_payment', '0002_paymentmethod_detail_paymentmethod_is_default_and_more'),
     ]
 
     operations = [

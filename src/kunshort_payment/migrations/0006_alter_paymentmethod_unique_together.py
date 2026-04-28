@@ -7,7 +7,7 @@ from django.db import migrations
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('payment', '0005_alter_paymenttype_metadata'),
+        ('kunshort_payment', '0005_alter_paymenttype_metadata'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

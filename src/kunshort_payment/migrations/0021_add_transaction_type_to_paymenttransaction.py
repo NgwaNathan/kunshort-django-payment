@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('payment', '0020_rename_emaketa_deposit_fee_fixed_paymenttype_platform_deposit_fee_fixed_and_more'),
+        ('kunshort_payment', '0020_rename_emaketa_deposit_fee_fixed_paymenttype_platform_deposit_fee_fixed_and_more'),
     ]
 
     operations = [
