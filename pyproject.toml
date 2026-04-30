@@ -1,6 +1,6 @@
 [project]
 name = "kunshort-django-payment"
-version = "0.1.2"
+version = "0.1.3"
 description = "Reusable Django payment app with a unified service interface across multiple payment providers"
 readme = "README.md"
 requires-python = ">=3.11"
